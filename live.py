@@ -132,14 +132,16 @@ class Live:
         is_mention = chat.kind == "group" and not m.out and ("mention" in msg["flags"] or "reply_to_me" in msg["flags"])
         if is_mention and not ignored:
             target = mine.get(m.id)
-            self.inbox.mentions.insert(0, msg | {
+            item = msg | {
                 "key": f"{chat.id}:{m.id}",
                 "chat": {"id": chat.id, "name": chat.name, "muted": chat.muted, "link": tg.chat_link(chat.entity),
                          "photo": tg.photo_id(chat.entity), "kind": chat.kind},
                 "kind": "reply" if target else "mention",
                 "replying_to": (target.message or tg.media_kind(target) or "")[:300] if target else None,
                 "unread": True, "ts": m.date.timestamp(), "topic": topic and topic["title"],
-            })
+            }
+            self.inbox.mentions.insert(0, item)
+            self.inbox.db.upsert([item])  # kept in Activity for good
 
         # Desktop notification, like Slack's default: DMs and mentions, never your own or ignored chats.
         notify = not m.out and not ignored and (is_mention or (chat.kind == "dm" and not chat.muted))
@@ -175,7 +177,9 @@ class Live:
         for m in self.inbox.mentions:
             if m["chat"]["id"] == chat.id and m["id"] <= (event.max_id or 0):
                 m["unread"] = False
-        self.publish({"type": "read", "chat_id": chat.id, "max_id": event.max_id, "unread": d.unread_count})
+        cleared = self.inbox.db.mark_chat_read(chat.id, event.max_id or 0)
+        self.publish({"type": "read", "chat_id": chat.id, "max_id": event.max_id, "unread": d.unread_count,
+                      "mentions_read": cleared, "mentions_unread": self.inbox.db.unread_count(self.inbox.ignored)})
 
     async def on_topic_read(self, update) -> None:
         """You read a topic somewhere else: clear it here too."""
@@ -186,7 +190,9 @@ class Live:
         t["read_upto"] = max(t["read_upto"], update.read_max_id)
         if update.read_max_id >= t["top_message"]:
             t["unread_count"] = t["unread_mentions"] = 0
-        self.publish({"type": "topic_read", "chat_id": chat_id, "topic_id": update.top_msg_id, "unread": t["unread_count"]})
+        cleared = self.inbox.db.mark_chat_read(chat_id, update.read_max_id, update.top_msg_id)
+        self.publish({"type": "topic_read", "chat_id": chat_id, "topic_id": update.top_msg_id, "unread": t["unread_count"],
+                      "mentions_read": cleared, "mentions_unread": self.inbox.db.unread_count(self.inbox.ignored)})
 
     async def on_seen(self, event) -> None:
         """Someone read your messages (Telegram's ✓✓)."""

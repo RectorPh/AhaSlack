@@ -560,6 +560,18 @@ async def forum_topics(client, chat: Chat) -> list[dict]:
     return out
 
 
+async def read_mentions(client, chat: Chat, msg_ids: list[int]) -> None:
+    """Clear Telegram's @-mention mark on these messages only (Slack: you saw the mention),
+    without marking the rest of the chat read."""
+    from telethon.tl.functions import channels as fch, messages as fms
+    if isinstance(chat.entity, types.Channel):
+        await client(fch.ReadMessageContentsRequest(channel=chat.entity, id=msg_ids))
+    else:
+        await client(fms.ReadMessageContentsRequest(id=msg_ids))
+    d = chat.dialog
+    d.unread_mentions_count = max(0, (d.unread_mentions_count or 0) - len(msg_ids))
+
+
 async def read_topic(client, chat: Chat, topic: int, max_id: int) -> None:
     """Mark one topic read (Esc in a topic, like Slack marking one channel read)."""
     await client(ReadDiscussionRequest(peer=chat.entity, msg_id=topic, read_max_id=max_id))

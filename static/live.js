@@ -70,10 +70,11 @@ function onLiveMessage(ev) {
   // Activity
   if (ev.mention && mentionData) {
     mentionData.items.unshift({ ...m, key: `${chat.id}:${m.id}`, chat: { id: chat.id, name: chat.name, kind: chat.kind, photo: chat.photo, muted: chat.muted, link: chat.link },
-      kind: (m.flags || []).includes("reply_to_me") ? "reply" : "mention", replying_to: null, unread: true, done: false, ts: Date.now() / 1000 });
+      kind: (m.flags || []).includes("reply_to_me") ? "reply" : "mention", replying_to: null, unread: true, ts: Date.now() / 1000, topic: ev.topic?.title });
+    mentionData.unread = (mentionData.unread || 0) + 1;
     if (view === "mentions") renderMentions();
   }
-  if (ev.mention) setBadges((state.mentions_unread = (state.mentions_unread || 0) + 1));
+  if (ev.mention) { state.mentions_unread = (state.mentions_unread || 0) + 1; updateMentionBadge(mentionData ? mentionData.unread : state.mentions_unread); }
   if (view === "unreads") unreadsSoon();
   if (ev.notify) notify(chat, m);
 }
@@ -91,7 +92,18 @@ function onLiveDelete(ev) {
   chatMessages = chatMessages.filter((m) => !ids.has(m.id));
   if (chatMessages.length !== before) rerenderChat();
 }
+function syncMentionReads(ev) {  // mentions read elsewhere (phone, Telegram Desktop, Esc)
+  if (ev.mentions_unread == null) return;
+  const keys = new Set(ev.mentions_read || []);
+  if (mentionData) {
+    for (const m of mentionData.items) if (keys.has(m.key)) m.unread = false;
+    if (view === "mentions" && keys.size) renderMentions();
+  }
+  state.mentions_unread = ev.mentions_unread;
+  updateMentionBadge(ev.mentions_unread);
+}
 function onLiveRead(ev) {  // you read it on your phone or Telegram Desktop
+  syncMentionReads(ev);
   for (const list of [state?.chats, allChats]) {
     const c = list?.find((x) => x.id === ev.chat_id);
     if (c) { c.unread_count = ev.unread; if (!ev.unread) c.unread_mentions = 0; }
@@ -101,6 +113,7 @@ function onLiveRead(ev) {  // you read it on your phone or Telegram Desktop
   if (view === "mentions") renderMentions();
 }
 function onTopicRead(ev) {
+  syncMentionReads(ev);
   const t = state?.topics?.[String(ev.chat_id)]?.find((x) => x.id === ev.topic_id);
   if (t) { t.unread_count = ev.unread; if (!ev.unread) t.unread_mentions = 0; }
   sidebarSoon();

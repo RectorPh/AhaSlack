@@ -30,6 +30,7 @@ import tg
 import triage
 from agent import Manager
 from live import Live
+from db import MentionDB
 import stickers
 
 STATIC = Path(__file__).with_name("static")
@@ -58,6 +59,7 @@ class Inbox:
         self.ignored: set[int] = set()        # chats the user ignored from the app's sidebar
         self.ui: dict = {}                     # sidebar sort/show, starred chats, read behavior, ...
         self.topics: dict[int, list[dict]] = {}  # forum group id -> its topics (Telegram Topics = Slack channels)
+        self.db = MentionDB(tg.HOME / "inbox.db")  # Activity history: every mention/reply, kept for good
         if STATE_FILE.exists():
             saved = json.loads(STATE_FILE.read_text())
             self.done = set(saved.get("done", []))
@@ -82,7 +84,7 @@ class Inbox:
         self.live = Live(self)
         self.live.attach()  # real-time: Telegram pushes new messages, edits, deletes and reads
         asyncio.create_task(self.load_all_topics())
-        asyncio.create_task(self.refresh_mentions(14))
+        asyncio.create_task(self.refresh_mentions(7 if self.db.get_meta("backfilled") else 30))
         if not latest.exists() or time.time() - latest.stat().st_mtime > 6 * 3600:  # live sync covers the rest
             self.start_refresh()
 
@@ -113,11 +115,19 @@ class Inbox:
             days = max(days or self.mentions_days or 14, 1)
             self.mentions = await tg.fetch_mentions(self.client, self.cfg, self.chats, days)
             self.mentions_days, self.mentions_at = days, time.time()
+            for m in self.mentions:
+                m["topic"] = (self.topic(m["chat"]["id"], m.get("topic_id")) or {}).get("title")
+            # into the Activity database; anything you marked done before counts as read
+            self.db.upsert(self.mentions, read_keys=self.done)
+            if days >= 30:
+                self.db.set_meta("backfilled", time.time())
 
     async def get_mentions(self, days: float) -> list[dict]:
-        if days > self.mentions_days or time.time() - self.mentions_at > 1800:
-            await self.refresh_mentions(max(days, self.mentions_days))
-        return self.mentions
+        """Mentions from the Activity database (used by the manager agent)."""
+        if time.time() - self.mentions_at > 1800:
+            await self.refresh_mentions(7)
+        items, _ = self.db.list(limit=1000, since=time.time() - days * 86400, exclude_chats=self.ignored)
+        return items
 
     def start_refresh(self) -> None:
         if self._refresh_task and not self._refresh_task.done():
@@ -206,7 +216,7 @@ def sidebar(rep: dict) -> list[dict]:
 @app.get("/api/state")
 async def state():
     rep = inbox.report or {"chats": [], "totals": {}, "generated_at": None}
-    open_mentions = [m for m in inbox.mentions if m["key"] not in inbox.done and m["chat"]["id"] not in inbox.ignored]
+
     return {
         "me": {"name": tg.utils.get_display_name(inbox.me), "username": inbox.me.username,
                "peer": inbox.me.id, "photo": tg.photo_id(inbox.me)},
@@ -218,8 +228,7 @@ async def state():
         "live": inbox.client.is_connected(),
         "snapshot_at": rep.get("generated_at"),
         "totals": rep.get("totals"),
-        "mentions_open": len(open_mentions),
-        "mentions_unread": sum(1 for m in open_mentions if m["unread"]),
+        "mentions_unread": inbox.db.unread_count(inbox.ignored),
         "chats": (chats := sidebar(rep)),
         "topics": {str(c["id"]): [{k: t[k] for k in ("id", "title", "unread_count", "unread_mentions", "last_ts", "closed", "pinned", "hidden")}
                                   for t in inbox.topics.get(c["id"], [])] for c in chats if c.get("forum")},
@@ -262,15 +271,55 @@ async def refresh():
 
 
 @app.get("/api/mentions")
-async def mentions(days: float = 7, refresh: bool = False):
-    days = min(max(days, 1), 30)
-    if refresh:
-        await inbox.refresh_mentions(max(days, inbox.mentions_days))
-    items = await inbox.get_mentions(days)
-    cutoff = time.time() - days * 86400
-    return {"days": days, "fetched_at": inbox.mentions_at,
-            "items": [m | {"done": m["key"] in inbox.done, "topic": (inbox.topic(m["chat"]["id"], m.get("topic_id")) or {}).get("title")}
-                      for m in items if m["ts"] >= cutoff and m["chat"]["id"] not in inbox.ignored]}
+async def mentions(filter: str = "all", limit: int = 100, before: float | None = None, refresh: bool = False):
+    """Activity: every mention and reply to you, newest first, with Slack-style read state."""
+    if refresh or time.time() - inbox.mentions_at > 1800:
+        await inbox.refresh_mentions(7)
+    items, more = inbox.db.list(filter=filter, limit=min(limit, 300), before=before, exclude_chats=inbox.ignored)
+    for m in items:
+        if m.get("topic_id") and not m.get("topic"):
+            m["topic"] = (inbox.topic(m["chat"]["id"], m["topic_id"]) or {}).get("title")
+    return {"items": items, "has_more": more, "unread": inbox.db.unread_count(inbox.ignored), "fetched_at": inbox.mentions_at}
+
+
+async def _clear_on_telegram(rows: list[dict]) -> None:
+    """Seen in the app: clear Telegram's @ mark on those messages (only them, not the chats)."""
+    if not inbox.cfg.mark_read_enabled:
+        return
+    by_chat: dict[int, list[int]] = {}
+    for r in rows:
+        by_chat.setdefault(r["chat_id"], []).append(r["msg_id"])
+    for chat_id, ids in by_chat.items():
+        c = inbox.chat_by_id(chat_id)
+        if c:
+            try:
+                await tg.read_mentions(inbox.client, c, ids)
+            except Exception as exc:  # noqa: BLE001 - the app's own read state still counts
+                print(f"clearing mentions in {c.name} failed: {exc}", file=sys.stderr)
+
+
+@app.post("/api/mentions/read")
+async def mentions_read(request: Request):
+    """Mark mentions read (seen) or unread, like Slack's Activity."""
+    body = await request.json()
+    keys = [k for k in body.get("keys", []) if isinstance(k, str)][:500]
+    read = bool(body.get("read", True))
+    rows = inbox.db.unread_keys(keys) if read else []
+    inbox.db.mark(keys, read)
+    for m in inbox.mentions:
+        if m["key"] in keys:
+            m["unread"] = not read
+    asyncio.create_task(_clear_on_telegram(rows))
+    return {"ok": True, "unread": inbox.db.unread_count(inbox.ignored)}
+
+
+@app.post("/api/mentions/read-all")
+async def mentions_read_all():
+    rows = inbox.db.mark_all_read(inbox.ignored)
+    for m in inbox.mentions:
+        m["unread"] = False
+    asyncio.create_task(_clear_on_telegram(rows))
+    return {"ok": True, "count": len(rows), "unread": 0}
 
 
 @app.post("/api/mentions/{key}/done")
@@ -343,8 +392,10 @@ async def mark_read(chat_id: int, topic: int | None = None):
         for m in inbox.mentions:
             if m["chat"]["id"] == chat_id and m.get("topic_id") == topic:
                 m["unread"] = False
+        inbox.db.mark_chat_read(chat_id, top, topic)
         return {"ok": True, "name": c.name}
     await _mark_read(c)
+    inbox.db.mark_chat_read(chat_id, getattr(c.dialog.message, "id", 0) or 2**31)
     return {"ok": True, "name": c.name}
 
 

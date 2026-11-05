@@ -434,7 +434,7 @@ async function setIgnored(chatId, ignored) {
     if (x) { x.ignored = ignored; if (ignored) { x.tier = "noise"; x.why = "ignored by you"; } }
   }
   renderSidebar();
-  if (mentionData) { mentionData.items = mentionData.items.filter((m) => !ignored || m.chat.id !== chatId); if (view === "mentions") renderMentions(); updateMentionBadge(); }
+  if (mentionData) { mentionData.items = mentionData.items.filter((m) => !ignored || m.chat.id !== chatId); if (view === "mentions") loadMentions(); }
   toast(ignored ? `Ignoring <b>${esc(c?.name)}</b>: it won't show in Needs you or Mentions. <a href="#" data-undo-ignore="${chatId}">Undo</a>`
     : `<b>${esc(c?.name)}</b> is back. It shows up again after the next scan.`, false, 7000);
   setTimeout(loadState, 800);
@@ -598,7 +598,7 @@ function setView(name) {
       `<button class="btn" data-act="new-convo">＋ <span class="lbl">New conversation</span></button>`);
   } else if (name === "mentions") {
     header(`<span class="hash">@</span><h1>Mentions &amp; replies</h1><span class="topic">Click one to jump to it in its chat</span>`,
-      `<button class="btn" data-act="done-all">✓ <span class="lbl">Mark all done</span></button><button class="btn" data-act="summarize-mentions">✦ <span class="lbl">Summarize</span></button><button class="btn" data-act="recheck">↻ <span class="lbl">Re-check</span></button>`);
+      `<button class="btn" data-act="done-all">✓ <span class="lbl">Mark all as read</span></button><button class="btn" data-act="summarize-mentions">✦ <span class="lbl">Summarize</span></button><button class="btn" data-act="recheck">↻ <span class="lbl">Re-check</span></button>`);
   }
   mountManager();
   renderSidebar();
@@ -623,7 +623,7 @@ $("#ch-actions").addEventListener("click", async (e) => {
   } else if (act === "read-all") {
     markAllRead();
   } else if (act === "summarize-mentions") {
-    askInPane(`Summarize my open mentions and replies from the last ${$("#mention-days").value} days: who wants what from me, grouped by urgency, with links. Skip ones already resolved in the thread.`, "Mentions & replies");
+    askInPane(`Summarize my unread mentions and replies: who wants what from me, grouped by urgency, with links. Skip ones already resolved in the thread.`, "Mentions & replies");
   } else if (act === "summarize-chat") {
     summarizeChat();
   } else if (act === "ask-search") {
@@ -1125,75 +1125,55 @@ wireComposer($("#chat-composer"), $("#chat-input"), async (v) => {
   }
 }, () => composeMode === "ask" && busy);
 
-// ================================================================== mentions (activity)
-let mentionFilter = "open";
-let mentionData = null;
+// ================================================================== Activity: mentions & replies (Slack-style)
+// Everything lives in the server's Activity database, so nothing ever disappears. A mention
+// counts as read once it has been on screen for a moment (or you open it), and the badge
+// comes from the same place as the list.
+let mentionFilter = "all";
+let mentionData = null;  // {items, has_more, unread}
 
 async function loadMentions(refresh = false) {
   const feed = $("#mention-feed");
-  feed.innerHTML = `<div class="loading">${refresh ? "Re-checking Telegram…" : "Loading…"}</div>`;
+  if (!mentionData || refresh) feed.innerHTML = `<div class="loading">${refresh ? "Re-checking Telegram…" : "Loading…"}</div>`;
   try {
-    mentionData = await api(`/api/mentions?days=${$("#mention-days").value}${refresh ? "&refresh=true" : ""}`);
+    mentionData = await api(`/api/mentions?filter=${mentionFilter}&limit=100${refresh ? "&refresh=true" : ""}`);
   } catch (e) {
     feed.innerHTML = `<div class="empty err">${esc(e.message)}</div>`;
     return;
   }
   renderMentions();
-  updateMentionBadge();
+  setBadges(mentionData.unread);
 }
-function updateMentionBadge() {
-  if (mentionData) setBadges(mentionData.items.filter((m) => m.unread && !m.done).length);
-}
-
-function visibleMentions() {
-  const f = mentionFilter;
-  return mentionData.items.filter((m) =>
-    f === "done" ? m.done : f === "unread" ? m.unread && !m.done : f === "mention" || f === "reply" ? m.kind === f && !m.done : !m.done);
-}
-
-// Marks everything in the current tab done ("Done" tab: brings them all back instead).
-async function markAllDone() {
-  if (!mentionData) return;
-  const undo = mentionFilter === "done";
-  const items = visibleMentions();
-  if (!items.length) return toast(undo ? "Nothing to bring back" : "Nothing to mark done");
-  const keys = items.map((m) => m.key);
-  try {
-    await postJson("/api/mentions-done", { keys, done: !undo });
-  } catch (e) { return toast(`Couldn't update: ${esc(e.message)}`, true); }
-  for (const m of items) m.done = !undo;
+async function loadOlderMentions() {
+  const last = mentionData?.items[mentionData.items.length - 1];
+  if (!last) return;
+  const more = await api(`/api/mentions?filter=${mentionFilter}&limit=100&before=${last.ts}`);
+  mentionData.items.push(...more.items);
+  mentionData.has_more = more.has_more;
   renderMentions();
-  updateMentionBadge();
-  toast(undo ? `↩ ${keys.length} back in Open` : `✓ Marked ${keys.length} done · <a href="#" data-undo-done="1">Undo</a>`, false, 7000);
-  lastDoneAll = keys;
 }
-let lastDoneAll = [];
-$("#toast").addEventListener("click", async (e) => {
-  if (!e.target.closest("[data-undo-done]")) return;
-  e.preventDefault();
-  await postJson("/api/mentions-done", { keys: lastDoneAll, done: false });
-  for (const m of mentionData.items) if (lastDoneAll.includes(m.key)) m.done = false;
-  renderMentions();
-  updateMentionBadge();
-  $("#toast").hidden = true;
-});
+function updateMentionBadge(unread) {
+  if (unread != null && mentionData) mentionData.unread = unread;
+  setBadges(mentionData ? mentionData.unread : state?.mentions_unread || 0);
+}
+function visibleMentions() { return mentionData?.items || []; }
 
 function renderMentions() {
-  const f = mentionFilter;
   const items = visibleMentions();
-  $('#ch-actions [data-act="done-all"] .lbl')?.replaceChildren(f === "done" ? "Move all back" : "Mark all done");
   const feed = $("#mention-feed");
+  const unreadNote = mentionData.unread ? `<div class="act-summary"><a href="#" data-show-unread>${mentionData.unread} unread</a> · <a href="#" data-read-all>Mark all as read</a></div>` : "";
   if (!items.length) {
-    feed.innerHTML = `<div class="empty"><div class="big">${f === "done" ? "📭" : "🎉"}</div>${f === "done" ? "Nothing marked done yet." : "You're all caught up."}</div>`;
+    feed.innerHTML = `<div class="empty"><div class="big">${mentionFilter === "unread" ? "🎉" : "💬"}</div>${mentionFilter === "unread" ? "You're all caught up." : "No mentions yet."}</div>`;
     return;
   }
   let day = null;
-  feed.innerHTML = items.map((m) => {
+  feed.innerHTML = unreadNote + items.map((m) => {
     const label = dayLabel(m.date);
     const head = label !== day ? dayPill(label) : "";
     day = label;
     return head + mentionRow(m);
-  }).join("");
+  }).join("") + (mentionData.has_more ? `<button class="load-older" data-load-older>Load older mentions</button>` : "");
+  watchUnreadMentions();
 }
 
 function mentionRow(m) {
@@ -1203,13 +1183,70 @@ function mentionRow(m) {
     <button data-act="context" title="Show the messages around it here">☰ Context</button>
     <button data-act="ask" title="Ask Inbox Manager">✦ Ask</button>
     ${m.link ? `<a class="ext" href="${esc(m.link)}" target="_blank" rel="noopener">↗ Telegram</a>` : ""}
-    <button data-act="done" class="${m.done ? "on" : ""}">${m.done ? "✓ Done" : "✓ Mark done"}</button>`;
+    <button data-act="toggle-read">${m.unread ? "Mark as read" : "Mark unread"}</button>`;
   const tag = `<span class="tag ${m.kind}">${m.kind === "reply" ? "REPLY" : "MENTION"}</span>`;
-  return `<div class="act ${m.unread && !m.done ? "unread" : ""} ${m.done ? "is-done" : ""}" data-key="${esc(m.key)}" title="Open in ${esc(m.chat.name)}">
-    <div class="line1">${m.unread && !m.done ? `<span class="dot"></span>` : ""}<span><b>${esc(m.sender.name)}</b> ${verb} in <b>${m.topic ? `# ${esc(m.topic)}</b> · <b>${esc(m.chat.name)}` : esc(chatLabel(m.chat))}</b></span><span class="sp"></span><span>${esc(m.date.slice(11))}</span></div>
+  return `<div class="act ${m.unread ? "unread" : ""}" data-key="${esc(m.key)}" title="Open in ${esc(m.chat.name)}">
+    <div class="line1">${m.unread ? `<span class="dot"></span>` : ""}<span><b>${esc(m.sender.name)}</b> ${verb} in <b>${m.topic ? `# ${esc(m.topic)}</b> · <b>${esc(m.chat.name)}` : esc(chatLabel(m.chat))}</b></span><span class="sp"></span><span>${esc(m.date.slice(11))}</span></div>
     ${msgRow(m, null, { actions, tag, after: quote })}
     <div class="reply-slot"></div><div class="ctx-slot"></div></div>`;
 }
+
+// Read on view, like Slack: an unread mention that stays on screen for ~1s (while the window has
+// focus) becomes read; the server also clears Telegram's @ mark on that one message.
+const seenQueue = new Set();
+let seenTimer = null;
+const seenIO = "IntersectionObserver" in window ? new IntersectionObserver((entries) => {
+  for (const en of entries) {
+    const row = en.target;
+    clearTimeout(row._seen);
+    if (en.isIntersecting && en.intersectionRatio >= 0.6) {
+      row._seen = setTimeout(() => { if (document.hasFocus() && view === "mentions") queueSeen(row.dataset.key); }, 1000);
+    }
+  }
+}, { threshold: [0, 0.6] }) : null;
+function watchUnreadMentions() {
+  seenIO?.disconnect();
+  for (const row of $$("#mention-feed .act.unread")) seenIO?.observe(row);
+}
+function queueSeen(key) {
+  seenQueue.add(key);
+  clearTimeout(seenTimer);
+  seenTimer = setTimeout(flushSeen, 400);
+}
+async function flushSeen() {
+  const keys = [...seenQueue];
+  seenQueue.clear();
+  if (keys.length) await setMentionsRead(keys, true);
+}
+async function setMentionsRead(keys, read) {
+  let res;
+  try { res = await postJson("/api/mentions/read", { keys, read }); } catch (e) { return toast(`Couldn't update: ${esc(e.message)}`, true); }
+  for (const m of mentionData?.items || []) {
+    if (!keys.includes(m.key)) continue;
+    m.unread = !read;
+    const row = $(`#mention-feed .act[data-key="${CSS.escape(m.key)}"]`);
+    if (row) {
+      row.classList.toggle("unread", !read);
+      row.querySelector(".line1 .dot")?.remove();
+      if (!read) row.querySelector(".line1").insertAdjacentHTML("afterbegin", `<span class="dot"></span>`);
+      const b = row.querySelector('[data-act="toggle-read"]');
+      if (b) b.textContent = read ? "Mark unread" : "Mark as read";
+    }
+  }
+  updateMentionBadge(res.unread);
+  const note = $("#mention-feed .act-summary");
+  if (note && !res.unread) note.remove();
+  else if (note) note.querySelector("[data-show-unread]").textContent = `${res.unread} unread`;
+}
+async function markAllMentionsRead() {
+  let res;
+  try { res = await api("/api/mentions/read-all", { method: "POST" }); } catch (e) { return toast(`Couldn't update: ${esc(e.message)}`, true); }
+  for (const m of mentionData?.items || []) m.unread = false;
+  updateMentionBadge(0);
+  renderMentions();
+  toast(`✓ Marked ${res.count} mention${res.count === 1 ? "" : "s"} as read`);
+}
+const markAllDone = markAllMentionsRead;  // the header button's old name
 
 function contextHtml(c) {
   const parent = c.replying_to && !c.before.some((m) => m.id === c.replying_to.id)
@@ -1252,13 +1289,7 @@ function openInlineReply(row, m) {
       const msg = await sendMessage(form, chatId, v, msgId);
       if (!msg) return setInput(form, input, v);
       slot.innerHTML = `<div class="replied">✓ You replied: ${esc(v.slice(0, 140))} · <a href="#" data-open-sent="${msg.id}">View in chat</a></div>`;
-      if (!m.done) {  // answered: mark it done (locally)
-        m.done = true;
-        row.classList.add("is-done");
-        row.classList.remove("unread");
-        await postJson(`/api/mentions/${encodeURIComponent(m.key)}/done`, { done: true });
-        updateMentionBadge();
-      }
+      if (m.unread) await setMentionsRead([m.key], true);  // answered: it's read
     } catch (err) {
       setInput(form, input, v);
       toast(`Not sent: ${esc(err.message)}`, true, 7000);
@@ -1268,6 +1299,9 @@ function openInlineReply(row, m) {
 }
 
 $("#mention-feed").addEventListener("click", async (e) => {
+  if (e.target.closest("[data-load-older]")) return loadOlderMentions();
+  if (e.target.closest("[data-read-all]")) { e.preventDefault(); return markAllMentionsRead(); }
+  if (e.target.closest("[data-show-unread]")) { e.preventDefault(); return $('#mention-tabs [data-f="unread"]').click(); }
   const row = e.target.closest(".act");
   if (!row || e.target.closest(".context") || e.target.closest(".att")) return;
   const m = mentionData.items.find((x) => x.key === row.dataset.key);
@@ -1278,14 +1312,12 @@ $("#mention-feed").addEventListener("click", async (e) => {
   const act = e.target.closest("[data-act]")?.dataset.act;
   if (act === "reply") openInlineReply(row, m);
   else if (act === "context") toggleContext(row, chatId, msgId);
-  else if (act === "done") {
-    m.done = !m.done;
-    await postJson(`/api/mentions/${encodeURIComponent(m.key)}/done`, { done: m.done });
-    renderMentions();
-    updateMentionBadge();
+  else if (act === "toggle-read") {
+    await setMentionsRead([m.key], m.unread);
   } else if (act === "ask") {
     askInPane(`What does ${m.sender.name} want from me here, and what should I do? (mention key ${m.key} in "${m.chat.name}")`, m.chat.name);
   } else {
+    if (m.unread) setMentionsRead([m.key], true);
     navigate({ view: "chat", chatId, focus: msgId, topic: m.topic_id || undefined });  // jump to it in its chat (and topic)
   }
 });
@@ -1295,9 +1327,8 @@ $("#mention-tabs").addEventListener("click", (e) => {
   if (!b) return;
   mentionFilter = b.dataset.f;
   $$("#mention-tabs button").forEach((x) => x.classList.toggle("on", x === b));
-  if (mentionData) renderMentions();
+  loadMentions();
 });
-$("#mention-days").addEventListener("change", () => loadMentions());
 
 // ================================================================== search: dropdown, results (messages / channels / people)
 let searchScope = null;  // chat id when searching inside one conversation (Cmd+F)
