@@ -1,0 +1,15 @@
+# Never commit Telegram logins or local state (they live in ~/.config and ~/.cache anyway)
+*.session
+*.session-journal
+credentials.json
+ui_state.json
+manager.json
+latest.json
+latest.txt
+
+# Build output and dependencies
+electron/node_modules/
+electron/dist/
+__pycache__/
+*.pyc
+.DS_Store

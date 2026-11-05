@@ -1,0 +1,37 @@
+{
+  "name": "ahaslack",
+  "productName": "AhaSlack",
+  "version": "1.0.0",
+  "description": "A Slack-style desktop client for your Telegram, with an AI inbox manager.",
+  "main": "main.js",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --mac --dir",
+    "dmg": "electron-builder --mac dmg"
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "app.ahaslack.desktop",
+    "productName": "AhaSlack",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["main.js", "package.json"],
+    "extraResources": [
+      {
+        "from": "..",
+        "to": "server",
+        "filter": ["*.py", "config.example.toml", "static/**", "README.md", "LICENSE"]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.social-networking",
+      "target": ["dir", "dmg"],
+      "icon": "build/icon.png",
+      "identity": null
+    }
+  }
+}

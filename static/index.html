@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AhaSlack</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js"></script>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.21.3/index.js"></script>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <button class="tb-btn menu" id="menu" title="Chats">☰</button>
+    <div class="tb-nav">
+      <button class="tb-btn" id="nav-back" title="Back">←</button>
+      <button class="tb-btn" id="nav-fwd" title="Forward">→</button>
+    </div>
+    <form class="search" id="search-form" role="search">
+      <span class="search-ico">⌕</span>
+      <span class="scope" id="search-scope" hidden></span>
+      <input id="search" placeholder="Search Telegram" autocomplete="off">
+      <span class="kbd-hint" id="search-kbd"></span>
+      <div class="search-pop" id="search-pop" hidden></div>
+    </form>
+    <div class="tb-right">
+      <span class="tb-status" id="status"></span>
+      <button class="tb-btn" id="refresh" title="Re-scan Telegram">↻</button>
+      <button class="tb-btn" id="open-shortcuts" title="Keyboard shortcuts">⌨</button>
+    </div>
+  </header>
+
+  <nav class="rail">
+    <div class="ws-tile" title="AhaSlack">A</div>
+    <div class="folder-rail" id="folder-rail" title="Telegram folders (⌘⇧S)"></div>
+    <button class="rail-btn active" data-rail="home"><span class="rail-ico">⌂</span><span class="rail-lbl">Home</span></button>
+    <button class="rail-btn" data-rail="mentions"><span class="rail-ico">@</span><span class="rail-lbl">Activity</span><b class="rail-badge" id="rail-badge" hidden></b></button>
+    <button class="rail-btn" data-rail="manager"><span class="rail-ico">✦</span><span class="rail-lbl">Manager</span></button>
+    <div class="rail-me" id="rail-me"></div>
+  </nav>
+
+  <div class="shell">
+    <aside class="sidebar" id="sidebar">
+      <header class="sb-head">
+        <button class="ws-menu" id="ws-menu" title="Preferences & shortcuts"><h2>AhaSlack <span class="caret-dn">⌄</span></h2></button>
+        <div class="sb-me" id="me"></div>
+      </header>
+      <div class="sb-top">
+        <button class="sb-item" data-view="manager"><span class="sb-ico bot">✦</span><span class="nm">Inbox Manager</span></button>
+        <button class="sb-item" data-view="unreads"><span class="sb-ico">≡</span><span class="nm">All unreads</span></button>
+        <button class="sb-item" data-view="mentions"><span class="sb-ico">@</span><span class="nm">Mentions &amp; replies</span><b class="pill" id="mention-badge" hidden></b></button>
+      </div>
+      <div id="sections"></div>
+    </aside>
+
+    <main class="main">
+      <header class="ch-head" id="ch-head">
+        <div class="ch-title" id="ch-title"></div>
+        <div class="ch-actions" id="ch-actions"></div>
+      </header>
+      <div class="banner" id="banner" hidden></div>
+
+      <section class="view" id="view-manager">
+        <div class="mount" id="manager-mount"></div>
+      </section>
+
+      <section class="view" id="view-chat" hidden>
+        <div class="feed" id="chat-feed"></div>
+        <button class="jump-latest" id="jump-latest" hidden>You're viewing older messages · <b>Jump to latest ↓</b></button>
+        <form class="composer" id="chat-composer">
+          <div class="reply-chip" id="reply-chip" hidden></div>
+          <textarea rows="1" id="chat-input"></textarea>
+          <div class="composer-bar">
+            <div class="mode" id="compose-mode">
+              <button type="button" data-mode="send" class="on">Message</button>
+              <button type="button" data-mode="ask">✦ Ask Manager</button>
+            </div>
+            <span class="hint" id="chat-hint"></span>
+            <button type="submit" class="send" title="Send (Enter)">➤</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="view" id="view-mentions" hidden>
+        <div class="tabs" id="mention-tabs">
+          <button data-f="open" class="on">Open</button>
+          <button data-f="unread">Unread</button>
+          <button data-f="mention">@ Mentions</button>
+          <button data-f="reply">↩ Replies</button>
+          <button data-f="done">Done</button>
+          <span class="tabs-right">
+            <select id="mention-days">
+              <option value="3">3 days</option>
+              <option value="7" selected>7 days</option>
+              <option value="14">14 days</option>
+              <option value="30">30 days</option>
+            </select>
+          </span>
+        </div>
+        <div class="feed" id="mention-feed"></div>
+      </section>
+
+      <section class="view" id="view-more" hidden>
+        <div class="feed" id="more-feed"></div>
+      </section>
+
+      <section class="view" id="view-files" hidden>
+        <div class="feed" id="files-feed"></div>
+      </section>
+
+      <section class="view" id="view-unreads" hidden>
+        <div class="feed" id="unreads-feed"></div>
+      </section>
+
+      <section class="view" id="view-search" hidden>
+        <div class="tabs" id="search-tabs">
+          <button data-t="messages" class="on">Messages <span class="cnt" id="st-msg"></span></button>
+          <button data-t="channels">Channels <span class="cnt" id="st-ch"></span></button>
+          <button data-t="people">People <span class="cnt" id="st-pp"></span></button>
+        </div>
+        <div class="feed" id="search-feed"></div>
+      </section>
+    </main>
+
+    <aside class="pane" id="pane" hidden>
+      <header class="pane-head">
+        <div><div class="pane-title">Thread</div><div class="pane-sub" id="pane-sub">Inbox Manager</div></div>
+        <button class="icon-btn" id="pane-close" title="Close">✕</button>
+      </header>
+      <div class="mount" id="pane-mount"></div>
+    </aside>
+  </div>
+</div>
+
+<!-- The manager conversation; moved between the main view and the thread pane. -->
+<div class="manager-box" id="manager-box">
+  <div class="thread" id="thread"></div>
+  <div class="suggestions" id="suggestions">
+    <button>What needs me today?</button>
+    <button>Who tagged me and what do they want?</button>
+    <button>What did I miss in my busiest group?</button>
+    <button>What can I safely ignore?</button>
+  </div>
+  <form class="composer" id="composer">
+    <textarea id="input" rows="1" placeholder="Message Inbox Manager" autocomplete="off"></textarea>
+    <div class="composer-bar"><span class="hint">Enter to send · Shift+Enter for a new line · read-only</span><button type="submit" class="send" id="send" title="Send (Enter)">➤</button></div>
+  </form>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<!-- Quick switcher (Cmd+K) -->
+<div class="overlay" id="switcher" hidden>
+  <div class="modal switcher">
+    <input id="switcher-input" placeholder="Jump to…" autocomplete="off">
+    <div class="switcher-list" id="switcher-list"></div>
+    <div class="modal-foot"><span><kbd>↑</kbd><kbd>↓</kbd> to navigate</span><span><kbd>↵</kbd> to open</span><span><kbd>esc</kbd> to close</span></div>
+  </div>
+</div>
+
+<!-- Keyboard shortcuts (configurable) -->
+<div class="overlay" id="shortcuts" hidden>
+  <div class="modal shortcuts">
+    <header class="modal-head"><h3>Keyboard shortcuts</h3><button class="icon-btn" data-close title="Close">✕</button></header>
+    <p class="modal-sub">Click a shortcut to change it, then press the new keys. Saved for this app.</p>
+    <div class="sc-list" id="sc-list"></div>
+    <div class="modal-foot"><button class="btn" id="sc-reset">Reset all to defaults</button></div>
+  </div>
+</div>
+
+<!-- Right-click / ⋯ menu on a sidebar chat -->
+<div class="ctx-menu" id="ctx-menu" hidden></div>
+
+<!-- Conversation details (Cmd+Shift+I) -->
+<div class="overlay" id="details" hidden>
+  <div class="modal details">
+    <header class="modal-head"><h3 id="details-title">Details</h3><button class="icon-btn" data-close title="Close">✕</button></header>
+    <div class="details-body" id="details-body"></div>
+  </div>
+</div>
+
+<!-- Confirm dialog -->
+<div class="overlay" id="confirm" hidden>
+  <div class="modal confirm">
+    <header class="modal-head"><h3 id="confirm-title"></h3></header>
+    <p class="modal-sub" id="confirm-text"></p>
+    <div class="modal-foot right"><button class="btn" id="confirm-no">Cancel</button><button class="btn primary" id="confirm-yes">OK</button></div>
+  </div>
+</div>
+
+<!-- Image viewer -->
+<div class="overlay lightbox" id="lightbox" hidden>
+  <div class="lb-top"><div class="lb-meta" id="lb-meta"></div><div class="lb-actions" id="lb-actions"></div></div>
+  <img id="lb-img" alt="">
+</div>
+<script src="/static/app.js"></script>
+<script src="/static/slack.js"></script>
+<script src="/static/live.js"></script>
+<script src="/static/picker.js"></script>
+</body>
+</html>

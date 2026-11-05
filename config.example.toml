@@ -1,0 +1,49 @@
+# Telegram inbox agent config. Lives at ~/.config/telegram-inbox/config.toml.
+#
+# Matching people and chats:
+#   123456789 or "-1001234567890"  exact id (chat_id is printed in every digest snapshot)
+#   "@username"                     exact username
+#   "Some text"                     case- and accent-insensitive part of the name ("tan" matches "Tân")
+
+timezone = "Asia/Ho_Chi_Minh"
+
+# Words that mean someone is talking to or about you. A hit makes the chat "needs you".
+# (@mentions and replies to your messages are detected automatically; no need to list them.)
+# Ignores case. Accented words match exactly ("Tân" won't hit "tấn");
+# words without accents match both ("tan" hits "Tân" and "tấn").
+my_keywords = ["Your Name", "yourhandle"]   # e.g. ["Tân", "anh Tân", "tannguyen"]
+
+# Words that make group chatter worth a closer look (does not make it "needs you" on its own).
+urgent_keywords = ["gấp", "urgent", "asap", "deadline", "sự cố", "incident", "hotfix", "rollback", "down"]
+
+# People whose messages always matter, wherever they write.
+vip_users = []        # e.g. ["@my_manager", 123456789]
+
+# Chats where any unread message matters.
+vip_chats = []        # e.g. ["Pricing Team"]
+
+# Always treat as noise, even if they mention you.
+ignore_chats = []     # e.g. ["Crypto signals", "@some_channel"]
+
+# Senders whose messages never count (bots that echo your name, noisy integrations, ...).
+ignore_senders = []
+
+include_archived = false     # archived chats are skipped entirely unless true
+treat_muted_as_noise = true  # muted chats are noise unless something in them is aimed at you
+
+# Web app: show a "Message" composer so you can send and reply from the app.
+# Only you can send (messages go out on Enter); the Inbox Manager agent stays read-only.
+sending_enabled = false
+
+# Web app: Esc marks the open chat as read on Telegram, Shift+Esc marks everything read
+# (after you confirm), like Slack. People may see read receipts. The agent never does this.
+mark_read_enabled = false
+
+[limits]
+must = 40           # messages kept per "needs you" chat
+maybe = 15          # messages kept per normal group
+noise = 3           # messages kept per noise chat
+scan = 200          # unread messages scanned per chat when looking for mentions/keywords
+scan_noise = 50     # same, for muted groups
+text_chars = 600    # long messages are cut here
+context_before = 3  # already-read messages shown above the unread ones, for context

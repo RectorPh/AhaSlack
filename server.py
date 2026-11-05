@@ -1,0 +1,668 @@
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["telethon>=1.36", "fastapi>=0.110", "uvicorn>=0.29", "claude-agent-sdk>=0.2"]
+# ///
+"""Inbox Manager web app: a Slack-style page for your Telegram inbox.
+
+    uv run --script server.py          # then open http://127.0.0.1:8765
+
+Listens on 127.0.0.1 only. Reads Telegram with your logged-in session (run login.py first);
+never sends anything or marks anything as read. The manager chat uses your Claude Code login.
+"""
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import os
+import sys
+import time
+from pathlib import Path
+from urllib.parse import urlparse
+
+import uvicorn
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+
+import tg
+import triage
+from agent import Manager
+from live import Live
+import stickers
+
+STATIC = Path(__file__).with_name("static")
+STATE_FILE = tg.HOME / "ui_state.json"
+PORT = int(os.environ.get("INBOX_PORT", "8765"))
+
+
+class Inbox:
+    """Everything the UI and the manager agent read from."""
+
+    def __init__(self):
+        self.cfg = tg.load_config()
+        self.client = tg.make_client(in_memory=True)
+        self.me = None
+        self.chats: list[tg.Chat] = []
+        self.report: dict | None = None
+        self.mentions: list[dict] = []
+        self.mentions_days = 0.0
+        self.mentions_at = 0.0
+        self.done: set[str] = set()
+        self.status = "starting"
+        self.refreshing = False
+        self._mention_lock = asyncio.Lock()
+        self._refresh_task: asyncio.Task | None = None
+        self.shortcuts: dict[str, str] = {}  # user overrides of the default keyboard shortcuts
+        self.ignored: set[int] = set()        # chats the user ignored from the app's sidebar
+        self.ui: dict = {}                     # sidebar sort/show, starred chats, read behavior, ...
+        if STATE_FILE.exists():
+            saved = json.loads(STATE_FILE.read_text())
+            self.done = set(saved.get("done", []))
+            self.shortcuts = saved.get("shortcuts", {})
+            self.ignored = set(saved.get("ignored", []))
+            self.ui = saved.get("ui", {})
+        self._apply_ignored()
+
+    def _apply_ignored(self) -> None:
+        """Chats ignored in the app count as config.toml's ignore_chats everywhere
+        (triage, mentions, the manager), on top of what the file lists."""
+        base = [p for p in tg.load_config().ignore_chats]
+        self.cfg.ignore_chats = base + [str(i) for i in sorted(self.ignored)]
+
+    async def start(self) -> None:
+        self.me = await tg.connect(self.client)
+        self.chats = await tg.load_chats(self.client, self.cfg.include_archived)
+        latest = tg.CACHE / "latest.json"
+        if latest.exists():
+            self.report = json.loads(latest.read_text("utf-8"))
+        self.status = "ready"
+        self.live = Live(self)
+        self.live.attach()  # real-time: Telegram pushes new messages, edits, deletes and reads
+        asyncio.create_task(self.refresh_mentions(14))
+        if not latest.exists() or time.time() - latest.stat().st_mtime > 6 * 3600:  # live sync covers the rest
+            self.start_refresh()
+
+    def chat_by_id(self, chat_id: int) -> tg.Chat | None:
+        return next((c for c in self.chats if c.id == chat_id), None)
+
+    def save_state(self) -> None:
+        STATE_FILE.write_text(json.dumps({"done": sorted(self.done), "shortcuts": self.shortcuts,
+                                          "ignored": sorted(self.ignored), "ui": self.ui}))
+        os.chmod(STATE_FILE, 0o600)
+
+    async def refresh_mentions(self, days: float | None = None) -> None:
+        async with self._mention_lock:
+            days = max(days or self.mentions_days or 14, 1)
+            self.mentions = await tg.fetch_mentions(self.client, self.cfg, self.chats, days)
+            self.mentions_days, self.mentions_at = days, time.time()
+
+    async def get_mentions(self, days: float) -> list[dict]:
+        if days > self.mentions_days or time.time() - self.mentions_at > 1800:
+            await self.refresh_mentions(max(days, self.mentions_days))
+        return self.mentions
+
+    def start_refresh(self) -> None:
+        if self._refresh_task and not self._refresh_task.done():
+            return
+        self._refresh_task = asyncio.create_task(self._refresh())
+
+    async def _refresh(self) -> None:
+        self.refreshing = True
+        try:
+            self.chats = await tg.load_chats(self.client, self.cfg.include_archived)
+            await self.refresh_mentions()
+            self.report = await tg.snapshot(self.client, self.me, self.cfg, self.chats)
+            tg.save_snapshot(self.report)
+        except Exception as exc:  # noqa: BLE001 - keep the server up, show the error
+            self.status = f"refresh failed: {type(exc).__name__}: {exc}"
+            print(self.status, file=sys.stderr)
+        else:
+            self.status = "ready"
+        finally:
+            self.refreshing = False
+
+
+inbox: Inbox | None = None
+manager: Manager | None = None
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    global inbox, manager
+    inbox = Inbox()
+    await inbox.start()
+    manager = Manager(inbox)
+    manager.start()
+    yield
+    await inbox.client.disconnect()
+
+
+app = FastAPI(lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
+ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
+
+
+@app.middleware("http")
+async def only_this_page(request: Request, call_next):
+    """Block other websites from driving this server: a wrong Host means DNS rebinding,
+    and a state-changing request (send, ask, refresh) must carry our custom header, which a
+    cross-site form can't add and a cross-site fetch can't add without a CORS preflight we never allow."""
+    if request.headers.get("host") not in ALLOWED_HOSTS:
+        return JSONResponse({"error": "forbidden host"}, status_code=403)
+    if request.method not in ("GET", "HEAD"):
+        origin = request.headers.get("origin")
+        if request.headers.get("x-inbox") != "1" or (origin and urlparse(origin).netloc not in ALLOWED_HOSTS):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+    return await call_next(request)
+
+
+@app.get("/")
+async def index():
+    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})
+
+
+SIDEBAR_DAYS = 45
+
+
+def sidebar(rep: dict) -> list[dict]:
+    """Every chat with unread messages or activity in the last SIDEBAR_DAYS, with its tier."""
+    tiers = {e["id"]: e for e in rep.get("chats", [])}
+    cutoff = time.time() - SIDEBAR_DAYS * 86400
+    out = []
+    for c in inbox.chats:
+        info = c.info()
+        entry = tiers.get(c.id)
+        if not entry and info["last_ts"] < cutoff and not info["unread_count"]:
+            continue
+        ignored = c.id in inbox.ignored
+        live = inbox.live.tiers.get(c.id)
+        if live and not ignored:
+            entry = {"tier": live[0], "reasons": live[1]}
+        out.append({k: info[k] for k in ("id", "name", "username", "kind", "muted", "unread_count", "unread_mentions", "photo", "last_ts", "link")}
+                   | {"tier": "noise" if ignored else (entry["tier"] if entry else None),
+                      "why": "ignored by you" if ignored else ("; ".join(entry["reasons"]) if entry else ""),
+                      "ignored": ignored})
+    return out
+
+
+@app.get("/api/state")
+async def state():
+    rep = inbox.report or {"chats": [], "totals": {}, "generated_at": None}
+    open_mentions = [m for m in inbox.mentions if m["key"] not in inbox.done and m["chat"]["id"] not in inbox.ignored]
+    return {
+        "me": {"name": tg.utils.get_display_name(inbox.me), "username": inbox.me.username,
+               "peer": inbox.me.id, "photo": tg.photo_id(inbox.me)},
+        "status": inbox.status,
+        "sending_enabled": inbox.cfg.sending_enabled,
+        "mark_read_enabled": inbox.cfg.mark_read_enabled,
+        "timezone": inbox.cfg.timezone,
+        "refreshing": inbox.refreshing,
+        "live": inbox.client.is_connected(),
+        "snapshot_at": rep.get("generated_at"),
+        "totals": rep.get("totals"),
+        "mentions_open": len(open_mentions),
+        "mentions_unread": sum(1 for m in open_mentions if m["unread"]),
+        "chats": sidebar(rep),
+        "history": manager.history,
+    }
+
+
+AVATARS = tg.CACHE / "avatars"
+_avatar_gate = asyncio.Semaphore(6)
+
+
+@app.get("/api/avatar/{peer}")
+async def avatar(peer: int):
+    entity = tg.ENTITIES.get(peer) or (inbox.me if peer == inbox.me.id else None)
+    if entity is None:
+        raise HTTPException(404)
+    async with _avatar_gate:
+        try:
+            path = await tg.download_avatar(inbox.client, entity, AVATARS)
+        except Exception:  # noqa: BLE001 - hidden or expired photo: fall back to initials
+            path = None
+    if not path:
+        raise HTTPException(404)
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.get("/api/search")
+async def search(q: str, chat: int | None = None, days: float | None = None):
+    c = inbox.chat_by_id(chat) if chat else None
+    return {"items": await tg.search(inbox.client, inbox.cfg, q, c, days, limit=50)}
+
+
+@app.post("/api/refresh")
+async def refresh():
+    inbox.start_refresh()
+    return {"ok": True}
+
+
+@app.get("/api/mentions")
+async def mentions(days: float = 7, refresh: bool = False):
+    days = min(max(days, 1), 30)
+    if refresh:
+        await inbox.refresh_mentions(max(days, inbox.mentions_days))
+    items = await inbox.get_mentions(days)
+    cutoff = time.time() - days * 86400
+    return {"days": days, "fetched_at": inbox.mentions_at,
+            "items": [m | {"done": m["key"] in inbox.done} for m in items
+                      if m["ts"] >= cutoff and m["chat"]["id"] not in inbox.ignored]}
+
+
+@app.post("/api/mentions/{key}/done")
+async def toggle_done(key: str, request: Request):
+    body = await request.json()
+    (inbox.done.add if body.get("done", True) else inbox.done.discard)(key)
+    inbox.save_state()
+    return {"ok": True}
+
+
+@app.post("/api/mentions-done")
+async def mentions_done_many(request: Request):
+    """Mark many mentions done (or not done) at once: the "Mark all done" button."""
+    body = await request.json()
+    keys = [k for k in body.get("keys", []) if isinstance(k, str)]
+    if body.get("done", True):
+        inbox.done.update(keys)
+    else:
+        inbox.done.difference_update(keys)
+    inbox.save_state()
+    return {"ok": True, "count": len(keys)}
+
+
+@app.post("/api/chat/{chat_id}/ignore")
+async def ignore_chat(chat_id: int, request: Request):
+    """Ignore a chat (it leaves "Needs you" and its mentions disappear) or stop ignoring it."""
+    c = inbox.chat_by_id(chat_id)
+    if not c:
+        raise HTTPException(404, "unknown chat")
+    ignored = bool((await request.json()).get("ignored", True))
+    (inbox.ignored.add if ignored else inbox.ignored.discard)(chat_id)
+    inbox._apply_ignored()
+    inbox.save_state()
+    asyncio.create_task(inbox.refresh_mentions())  # drop (or bring back) its mentions
+    return {"ok": True, "ignored": ignored, "name": c.name}
+
+
+def _mark_read_allowed() -> None:
+    if not inbox.cfg.mark_read_enabled:
+        raise HTTPException(403, "Marking as read is off. Set mark_read_enabled = true in config.toml and restart.")
+
+
+async def _mark_read(c: tg.Chat) -> None:
+    await inbox.client.send_read_acknowledge(c.entity, clear_mentions=True)
+    d = c.dialog
+    d.unread_count = d.unread_mentions_count = 0
+    last = getattr(d, "message", None)
+    if last is not None:
+        d.dialog.read_inbox_max_id = max(d.dialog.read_inbox_max_id or 0, last.id)
+    for m in inbox.mentions:
+        if m["chat"]["id"] == c.id:
+            m["unread"] = False
+
+
+@app.post("/api/chat/{chat_id}/read")
+async def mark_read(chat_id: int):
+    """Esc in a chat, like Slack: mark it read on Telegram."""
+    _mark_read_allowed()
+    c = inbox.chat_by_id(chat_id)
+    if not c:
+        raise HTTPException(404, "unknown chat")
+    await _mark_read(c)
+    return {"ok": True, "name": c.name}
+
+
+@app.post("/api/chat/{chat_id}/unread")
+async def mark_unread(chat_id: int):
+    """⌥-click a message / U, like Slack (Telegram marks the whole chat unread)."""
+    _mark_read_allowed()
+    c = inbox.chat_by_id(chat_id)
+    if not c:
+        raise HTTPException(404, "unknown chat")
+    await tg.mark_unread(inbox.client, c)
+    return {"ok": True, "name": c.name}
+
+
+@app.post("/api/chat/{chat_id}/save/{msg_id}")
+async def save_message(chat_id: int, msg_id: int):
+    """A on a message, like Slack's "save": forwards it to your Saved Messages."""
+    if not inbox.cfg.sending_enabled:
+        raise HTTPException(403, "Saving forwards to Saved Messages, which needs sending_enabled = true.")
+    c = inbox.chat_by_id(chat_id)
+    if not c:
+        raise HTTPException(404, "unknown chat")
+    await tg.save_to_saved(inbox.client, c, msg_id)
+    print(f"saved message {msg_id} from {c.name} to Saved Messages", file=sys.stderr)
+    return {"ok": True}
+
+
+def _writes_allowed() -> None:
+    if not inbox.cfg.sending_enabled:
+        raise HTTPException(403, "This changes Telegram, which needs sending_enabled = true in config.toml.")
+
+
+def _chat_or_404(chat_id: int) -> tg.Chat:
+    c = inbox.chat_by_id(chat_id)
+    if not c:
+        raise HTTPException(404, "unknown chat")
+    return c
+
+
+async def _telegram(call, what: str):
+    try:
+        return await call
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc))
+    except Exception as exc:  # noqa: BLE001 - e.g. no rights to pin, message too old to edit
+        raise HTTPException(400, f"Telegram refused to {what}: {exc}")
+
+
+@app.post("/api/chat/{chat_id}/msg/{msg_id}/{op}")
+async def message_action(chat_id: int, msg_id: int, op: str, request: Request):
+    """Slack's message actions, done by the user: edit, delete/unsend, forward, pin, react, remind."""
+    _writes_allowed()
+    c = _chat_or_404(chat_id)
+    body = await request.json() if (await request.body()) else {}
+    if op == "edit":
+        text = (body.get("text") or "").strip()
+        if not text or len(text) > tg.MAX_TEXT:
+            raise HTTPException(400, "text is empty or too long")
+        return {"message": await _telegram(tg.edit_text(inbox.client, inbox.cfg, c, msg_id, text), "edit it")}
+    if op == "delete":
+        await _telegram(tg.delete_own(inbox.client, c, msg_id), "delete it")
+    elif op == "forward":
+        dst = _chat_or_404(int(body.get("to")))
+        await _telegram(tg.forward_to(inbox.client, c, msg_id, dst), "forward it")
+        return {"ok": True, "to": dst.name}
+    elif op == "pin":
+        await _telegram(tg.set_pinned(inbox.client, c, msg_id, bool(body.get("pinned", True))), "pin it")
+    elif op == "react":
+        await _telegram(tg.react(inbox.client, c, msg_id, body.get("emoji") or None), "react")
+    elif op == "remind":
+        minutes = int(body.get("minutes") or 60)
+        if not 1 <= minutes <= 60 * 24 * 30:
+            raise HTTPException(400, "a reminder must be 1 minute to 30 days away")
+        when = await _telegram(tg.remind(inbox.client, inbox.cfg, c, msg_id, minutes), "set a reminder")
+        return {"ok": True, "at": when.astimezone(tg.ZoneInfo(inbox.cfg.timezone)).strftime("%a %d %b %H:%M")}
+    else:
+        raise HTTPException(404, "unknown action")
+    print(f"{op} message {msg_id} in {c.name}", file=sys.stderr)
+    return {"ok": True}
+
+
+MAX_UPLOAD = 50 * 1024 * 1024
+
+
+@app.post("/api/chat/{chat_id}/upload")
+async def upload(chat_id: int, request: Request):
+    """⌘O, like Slack: send a file (the page posts the raw bytes)."""
+    _writes_allowed()
+    c = _chat_or_404(chat_id)
+    data = await request.body()
+    if not data or len(data) > MAX_UPLOAD:
+        raise HTTPException(400, "file is empty or larger than 50 MB")
+    from urllib.parse import unquote
+    name = unquote(request.headers.get("x-filename") or "file")[:200] or "file"
+    caption = unquote(request.headers.get("x-caption") or "")[:1000]
+    msg = await _telegram(tg.send_upload(inbox.client, inbox.cfg, c, data, name, caption), "send the file")
+    print(f"uploaded {name} ({len(data)} bytes) to {c.name}", file=sys.stderr)
+    return {"message": msg}
+
+
+@app.get("/api/status")
+async def get_status():
+    return {"about": await tg.get_bio(inbox.client)}
+
+
+@app.post("/api/status")
+async def set_status(request: Request):
+    """⌘⇧Y, Slack's status: Telegram's bio (70 characters, or 140 with Premium)."""
+    _writes_allowed()
+    about = ((await request.json()).get("about") or "").strip()
+    if len(about) > 140:
+        raise HTTPException(400, "a Telegram bio is at most 70 characters (140 with Premium)")
+    await _telegram(tg.set_bio(inbox.client, about), "update your bio")
+    return {"ok": True, "about": about}
+
+
+@app.get("/api/folders")
+async def get_folders():
+    """Telegram chat folders: the app's 'workspaces'."""
+    try:
+        return {"folders": await tg.folders(inbox.client, inbox.chats)}
+    except Exception as exc:  # noqa: BLE001
+        return {"folders": [{"id": 0, "title": "All chats", "emoji": "", "chats": [c.id for c in inbox.chats]}], "error": str(exc)}
+
+
+@app.get("/api/downloads")
+async def downloads():
+    """⌘⇧J: the pictures this app has downloaded (Slack's 'downloaded files')."""
+    out = []
+    for p in sorted(MEDIA.glob("*_*.*"), key=lambda p: p.stat().st_mtime, reverse=True)[:300]:
+        chat_id, _, msg_id = p.stem.rpartition("_")
+        try:
+            cid, mid = int(chat_id), int(msg_id)
+        except ValueError:
+            continue
+        c = inbox.chat_by_id(cid)
+        out.append({"chat_id": cid, "msg_id": mid, "chat": c.name if c else "?", "size": p.stat().st_size,
+                    "ts": p.stat().st_mtime, "url": f"/api/media/{cid}/{mid}"})
+    return {"items": out}
+
+
+@app.post("/api/read-all")
+async def mark_all_read():
+    """Shift+Esc, like Slack: mark every unread chat read (the page asks first)."""
+    _mark_read_allowed()
+    done = 0
+    for c in inbox.chats:
+        if c.dialog.unread_count or c.dialog.unread_mentions_count or getattr(c.dialog.dialog, "unread_mark", False):
+            try:
+                await _mark_read(c)
+                done += 1
+            except Exception as exc:  # noqa: BLE001 - keep going; report what worked
+                print(f"mark read failed for {c.name}: {exc}", file=sys.stderr)
+    return {"ok": True, "count": done}
+
+
+@app.get("/api/unreads")
+async def unreads():
+    """All unreads, like Slack: every chat with unread messages and its latest unread ones."""
+    entries = {e["id"]: e for e in (inbox.report or {}).get("chats", [])}
+    out = []
+    for c in inbox.chats:
+        info = c.info()
+        if not info["unread_count"] or c.id in inbox.ignored:
+            continue
+        e = entries.get(c.id)
+        msgs = [m | {"chat_id": m.get("chat_id", c.id)} for m in (e["messages"] if e else [])][-4:]
+        out.append({"chat": info, "tier": e["tier"] if e else None, "why": e["reasons"] if e else [], "messages": msgs})
+    order = {"must": 0, "maybe": 1, None: 2, "noise": 3}
+    out.sort(key=lambda x: (order.get(x["tier"], 2), -x["chat"]["last_ts"]))
+    return {"items": out}
+
+
+@app.get("/api/chat/{chat_id}")
+async def chat(chat_id: int, limit: int = 60, around: int | None = None, before: int | None = None):
+    c = inbox.chat_by_id(chat_id)
+    if not c:
+        raise HTTPException(404, "unknown chat")
+    win = await tg.chat_window(inbox.client, inbox.cfg, c, limit=min(limit, 200), around=around, before=before)
+    entry = next((e for e in (inbox.report or {}).get("chats", []) if e["id"] == chat_id), None)
+    for m in win["messages"]:
+        m["flags"] = triage.message_flags(m, inbox.cfg)
+    return {"chat": c.info(), "tier": entry and entry["tier"], "why": entry and entry["reasons"],
+            "read_upto": getattr(c.dialog.dialog, "read_inbox_max_id", 0), **win}
+
+
+@app.get("/api/events")
+async def event_stream():
+    """Server-Sent Events: every new message, edit, delete and read, as it happens."""
+    async def gen():
+        async for ev in inbox.live.stream():
+            yield f"data: {json.dumps(ev, ensure_ascii=False, default=str)}\n\n"
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/stickers")
+async def sticker_library():
+    """Your recent, favorite and installed stickers, plus your custom emoji sets."""
+    return await stickers.library(inbox.client)
+
+
+@app.get("/api/stickers/set/{set_id}/{access_hash}")
+async def sticker_set(set_id: int, access_hash: int):
+    return {"stickers": await stickers.sticker_set(inbox.client, set_id, access_hash)}
+
+
+@app.get("/api/sticker/{doc_id}")
+async def sticker_file(doc_id: int, thumb: bool = False):
+    async with _media_gate:
+        try:
+            got = await stickers.file_for(inbox.client, doc_id, thumb)
+        except Exception:  # noqa: BLE001
+            got = None
+    if not got:
+        raise HTTPException(404)
+    path, mime = got
+    return FileResponse(path, media_type=mime, headers={"Cache-Control": "private, max-age=2592000"})
+
+
+@app.post("/api/chat/{chat_id}/sticker")
+async def send_sticker(chat_id: int, request: Request):
+    _writes_allowed()
+    c = _chat_or_404(chat_id)
+    doc_id = int((await request.json()).get("doc_id"))
+    try:
+        msg = await stickers.send_sticker(inbox.client, inbox.cfg, c, doc_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"Telegram refused the sticker: {exc}")
+    return {"message": msg}
+
+
+@app.get("/api/gifts")
+async def gift_list():
+    """Gifts on your profile and Telegram's gift catalog (view only: gifts cost Stars)."""
+    return await stickers.gifts(inbox.client)
+
+
+@app.get("/api/chats")
+async def all_chats():
+    """Every dialog, for the quick switcher and group search."""
+    return {"chats": [{k: i[k] for k in ("id", "name", "username", "kind", "muted", "archived",
+                                         "unread_count", "unread_mentions", "photo", "last_ts")}
+                      for i in (c.info() for c in inbox.chats)]}
+
+
+MEDIA = tg.CACHE / "media"
+_media_gate = asyncio.Semaphore(4)
+
+
+@app.get("/api/media/{chat_id}/{msg_id}")
+async def media(chat_id: int, msg_id: int):
+    c = inbox.chat_by_id(chat_id)
+    if not c:
+        raise HTTPException(404)
+    async with _media_gate:
+        try:
+            got = await tg.download_image(inbox.client, c, msg_id, MEDIA)
+        except Exception:  # noqa: BLE001 - expired file reference, deleted message, ...
+            got = None
+    if not got:
+        raise HTTPException(404)
+    path, mime = got
+    return FileResponse(path, media_type=mime, headers={"Cache-Control": "private, max-age=604800"})
+
+
+@app.get("/api/prefs")
+async def get_prefs():
+    return {"shortcuts": inbox.shortcuts, "ui": inbox.ui}
+
+
+@app.post("/api/prefs")
+async def set_prefs(request: Request):
+    body = await request.json()
+    if "shortcuts" in body:
+        shortcuts = body["shortcuts"]
+        if not isinstance(shortcuts, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in shortcuts.items()):
+            raise HTTPException(400, "shortcuts must be an object of action -> key combo")
+        inbox.shortcuts = shortcuts
+    if "ui" in body:
+        if not isinstance(body["ui"], dict) or len(json.dumps(body["ui"])) > 100_000:
+            raise HTTPException(400, "ui must be a small object")
+        inbox.ui = body["ui"]
+    inbox.save_state()
+    return {"ok": True}
+
+
+@app.post("/api/chat/{chat_id}/send")
+async def send(chat_id: int, request: Request):
+    """Send a message the user typed and confirmed in the composer."""
+    if not inbox.cfg.sending_enabled:
+        raise HTTPException(403, "Sending is off. Set sending_enabled = true in config.toml and restart.")
+    c = inbox.chat_by_id(chat_id)
+    if not c:
+        raise HTTPException(404, "unknown chat")
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "empty message")
+    if len(text) > tg.MAX_TEXT:
+        raise HTTPException(400, f"message is longer than Telegram's {tg.MAX_TEXT} characters")
+    reply_to = body.get("reply_to")
+    try:
+        msg = await tg.send_text(inbox.client, inbox.cfg, c, text, int(reply_to) if reply_to else None)
+    except Exception as exc:  # noqa: BLE001 - e.g. no permission to post in a channel
+        raise HTTPException(400, f"Telegram refused: {exc}")
+    print(f"sent message {msg['id']} to {c.name}", file=sys.stderr)
+    return {"message": msg, "chat": c.name}
+
+
+@app.get("/api/context/{chat_id}/{msg_id}")
+async def context(chat_id: int, msg_id: int):
+    c = inbox.chat_by_id(chat_id)
+    if not c:
+        raise HTTPException(404, "unknown chat")
+    try:
+        return await tg.message_context(inbox.client, inbox.cfg, c, msg_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+
+
+@app.post("/api/ask")
+async def ask(request: Request):
+    prompt = ((await request.json()).get("message") or "").strip()
+    if not prompt:
+        raise HTTPException(400, "empty message")
+
+    async def stream():
+        async for event in manager.ask(prompt):
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/reset")
+async def reset():
+    await manager.reset()
+    return {"ok": True}
+
+
+@app.exception_handler(tg.NotLoggedIn)
+async def not_logged_in(_, exc):
+    return JSONResponse({"error": str(exc)}, status_code=401)
+
+
+if __name__ == "__main__":
+    try:
+        uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")
+    except tg.NotLoggedIn as exc:
+        print(exc, file=sys.stderr)
+        sys.exit(3)
