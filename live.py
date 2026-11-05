@@ -132,6 +132,8 @@ class Live:
             self.tiers[chat.id] = ("must", reasons or ["new message"])
 
         thread = self.inbox.track_thread(chat, msg | {"ts": m.date.timestamp()})  # threads you're in
+        if chat.kind == "group" and not msg.get("reply_to") and self.inbox.thread_ai():
+            asyncio.create_task(self._judge_live(chat))  # the local AI: does it continue an open thread?
 
         is_mention = chat.kind == "group" and not m.out and ("mention" in msg["flags"] or "reply_to_me" in msg["flags"])
         if is_mention and not ignored:
@@ -153,6 +155,13 @@ class Live:
         self.publish({"type": "message", "chat": chat.info() | {"tier": tier, "why": "; ".join(reasons), "ignored": chat.id in self.inbox.ignored},
                       "message": msg, "notify": notify, "mention": is_mention, "thread": thread,
                       "topic": topic and {k: topic[k] for k in ("id", "title", "unread_count", "unread_mentions", "last_ts")}})
+
+    async def _judge_live(self, chat) -> None:
+        try:
+            win = await tg.chat_window(self.inbox.client, self.inbox.cfg, chat, limit=30)
+            self.inbox.judge_threads(chat.id, win["messages"])
+        except Exception as exc:  # noqa: BLE001 - the message just stays where the rules put it
+            print(f"thread AI (live): {exc}", file=sys.stderr)
 
     async def on_edit(self, event) -> None:
         chat = await self._chat(event.chat_id)

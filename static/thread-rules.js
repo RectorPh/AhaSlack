@@ -1,7 +1,16 @@
 "use strict";
 // Which Slack-style thread each Telegram message belongs to. Telegram has no real threads: only
-// "Reply" links, and many people answer without pressing Reply. So grouping is rules, applied in
-// order, each marked certain (from Telegram's own data) or guessed (shown as AUTO, one click undoes).
+// "Reply" links, and many people answer without pressing Reply.
+//
+// Default ("classic", the original rules, which read better in practice):
+//   0. ai        the local AI's answer from the server (thread_hint: a root id, or 0 = not in a thread)
+//   1. manual    your own corrections (⇱) always win
+//   2. reply     a Reply joins the thread of the message it answers (Telegram's own chain)
+//   3. burst     the same person's next message within 2 minutes of their thread reply (AUTO),
+//                unless the local AI said it isn't part of the thread
+//
+// The stricter "v2" rules below (split late replies, revive old ones, tighter burst, short
+// answers) are kept for comparison (rules: "v2"); they measured as less natural, so they're off.
 //
 //   0. hint      certain  a classifier's answer from the server (thread_hint), when there is one
 //   1. manual    certain  your own corrections (⇱ "not part of this thread") always win
@@ -37,8 +46,9 @@ function tsOf(m) {
 }
 const senderKey = (m) => (m.out ? "me" : String(m.sender?.peer ?? m.sender?.id ?? m.sender?.name ?? "?"));
 
-function buildThreadsWith(msgs, { overrides = () => undefined, guesses = true } = {}) {
+function buildThreadsWith(msgs, { overrides = () => undefined, guesses = true, rules = "classic" } = {}) {
   const R = THREAD_RULES;
+  const v2 = rules === "v2";
   const byId = new Map(msgs.map((m) => [m.id, m]));
   const rootOf = new Map();  // message id -> thread root id (only for messages inside a thread)
   const via = new Map();     // message id -> rule name
@@ -49,11 +59,11 @@ function buildThreadsWith(msgs, { overrides = () => undefined, guesses = true } 
     if (rootOf.has(m.id)) return rootOf.get(m.id);
     if (splitAt.has(m.id) || depth > 60) return null;
     let r = null;
-    if (m.thread_hint) { r = m.thread_hint; via.set(m.id, "hint"); }
+    if (m.thread_hint && !m.reply_to) { r = m.thread_hint; via.set(m.id, "ai"); }
     else if (m.reply_to) {
       const parent = byId.get(m.reply_to);
       if (parent) {
-        if (tsOf(m) - tsOf(parent) > R.SPLIT_GAP_S) { splitAt.add(m.id); return null; }  // resumed later: new thread
+        if (v2 && tsOf(m) - tsOf(parent) > R.SPLIT_GAP_S) { splitAt.add(m.id); return null; }  // resumed later: new thread
         r = resolve(parent, depth + 1) ?? parent.id;
       } else {
         r = m.thread_top || m.reply_to;  // the start isn't loaded
@@ -68,7 +78,7 @@ function buildThreadsWith(msgs, { overrides = () => undefined, guesses = true } 
   // Rule 2, revive: a lone reply to something old and unloaded stays in the channel.
   const orphanCount = new Map();
   for (const [id, r] of rootOf) if (!byId.has(r)) orphanCount.set(r, (orphanCount.get(r) || 0) + 1);
-  for (const [id, r] of [...rootOf]) {
+  for (const [id, r] of v2 ? [...rootOf] : []) {
     if (!byId.has(r) && orphanCount.get(r) === 1 && via.get(id) === "reply") { rootOf.delete(id); via.set(id, "revive"); }
   }
 
@@ -83,7 +93,11 @@ function buildThreadsWith(msgs, { overrides = () => undefined, guesses = true } 
     const ov = overrides(m);
     if (ov === 0) { rootOf.delete(m.id); via.set(m.id, "manual"); prev = m; continue; }
     if (ov) { rootOf.set(m.id, ov); via.set(m.id, "manual"); prev = m; continue; }
-    if (guesses && !rootOf.has(m.id) && !m.reply_to && prev && rootOf.has(prev.id) && !(m.reply_count > 0)) {
+    if (m.thread_hint === 0) { via.set(m.id, "ai-none"); prev = m; continue; }  // the local AI said: not a thread reply
+    if (!v2 && guesses && !rootOf.has(m.id) && !m.reply_to && prev && rootOf.has(prev.id) && senderKey(prev) === senderKey(m) &&
+        tsOf(m) - tsOf(prev) <= 120) {
+      rootOf.set(m.id, rootOf.get(prev.id)); via.set(m.id, "burst");                      // classic rule 3
+    } else if (v2 && guesses && !rootOf.has(m.id) && !m.reply_to && prev && rootOf.has(prev.id) && !(m.reply_count > 0)) {
       const root = rootOf.get(prev.id);
       const gap = tsOf(m) - tsOf(prev);
       const text = (m.text || "").trim();
@@ -131,7 +145,8 @@ function mentionsSender(prev, m) {
 
 // What each rule means, for the AUTO tag's tooltip.
 const THREAD_RULE_LABEL = {
-  burst: "Grouped automatically: they wrote it within a minute of their reply in this thread",
+  ai: "Grouped by the local AI (it read the conversation) · ⇱ if it's wrong",
+  burst: "Grouped automatically: they wrote it right after their reply in this thread",
   answer: "Grouped automatically: a short answer right after a message in this thread",
 };
 

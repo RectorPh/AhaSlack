@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS thread_labels (
     root_id INTEGER, verdict INTEGER NOT NULL,  -- 1 = the rule was right, 0 = wrong
     rules TEXT, ts REAL NOT NULL, data TEXT
 );
+-- The local AI's answers: which thread a message sent without Reply continues (0 = none).
+CREATE TABLE IF NOT EXISTS thread_hints (chat_id INTEGER, msg_id INTEGER, root_id INTEGER NOT NULL, model TEXT, ts REAL,
+                                         PRIMARY KEY(chat_id, msg_id));
 CREATE TABLE IF NOT EXISTS thread_msgs (chat_id INTEGER, msg_id INTEGER, root_id INTEGER, PRIMARY KEY(chat_id, msg_id));
 """
 DROP = ("done", "flags")  # per-request fields that shouldn't be stored
@@ -277,6 +280,18 @@ class MentionDB:
             "SELECT lower(q) AS q, chat_id, COUNT(*) AS n FROM visits WHERE kind = 'switch' AND q IS NOT NULL "
             "GROUP BY lower(q), chat_id ORDER BY n DESC LIMIT ?", (limit,)).fetchall()
         return [[r["q"], r["chat_id"], r["n"]] for r in rows]
+
+    # ------------------------------------------------------------- local AI thread hints
+    def thread_hints(self, chat_id: int, msg_ids: list[int]) -> dict[int, int]:
+        if not msg_ids:
+            return {}
+        marks = ",".join("?" * len(msg_ids))
+        rows = self.conn.execute(f"SELECT msg_id, root_id FROM thread_hints WHERE chat_id = ? AND msg_id IN ({marks})", [chat_id, *msg_ids])
+        return {r["msg_id"]: r["root_id"] for r in rows}
+
+    def set_thread_hint(self, chat_id: int, msg_id: int, root_id: int, model: str) -> None:
+        with self.conn:
+            self.conn.execute("INSERT OR REPLACE INTO thread_hints VALUES(?, ?, ?, ?, ?)", (chat_id, msg_id, root_id, model, time.time()))
 
     # ------------------------------------------------------------- thread accuracy labels
     def add_labels(self, items: list[dict]) -> int:

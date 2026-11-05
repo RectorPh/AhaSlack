@@ -64,13 +64,13 @@ parts of Slack that make a busy inbox manageable.
 - The **Threads** view lists every thread you're in (you replied, or someone replied to you),
   with a badge for new replies, an **Unread** tab, **Mark as read / Mark unread** on each
   thread, and **Mark all as read**.
-- Grouping is **rule-based** ([`static/thread-rules.js`](static/thread-rules.js)). Certain:
-  Telegram's Reply links, except that a reply coming hours later starts a fresh thread, and a
-  lone reply to an old message stays in the channel. Guessed (marked *AUTO*, one click moves it
-  back, and the correction is remembered): someone's follow-up within a minute of their thread
-  reply unless it's addressed to the group, and a short answer ("ok", "dạ", "đúng rồi", 👍) from
-  someone in the thread. Guessing can be turned off. There's a hook ready for a small local
-  model to classify messages into threads later.
+- Grouping uses Telegram's Reply links, plus someone's follow-up within 2 minutes of their own
+  thread reply (marked *AUTO*; one click moves it back, and the correction is remembered).
+- **Local AI (optional):** for messages sent *without* Reply while a thread is active, a small
+  model on your Mac ([Ollama](https://ollama.com), `qwen2.5:3b` by default) decides whether
+  it continues one of the open threads. Each message is judged once and cached; nothing leaves
+  your Mac. Turn it on in Preferences (⌘,) → Threads, which also shows whether Ollama is
+  running and can download the model.
 - Prefer Telegram's way? Turn threads off in Preferences (**⌘,**) to show replies inline again.
 
 ### 💬 Direct messages kept apart from groups

@@ -6,7 +6,7 @@
 // "N replies" bar under each, and the thread opens in the right pane with its own message box.
 
 const threadsOn = () => uiPrefs.threads !== false;
-const GUESSED = new Set(["burst", "answer"]);
+const GUESSED = new Set(["burst", "answer", "ai"]);
 let threadView = null;  // the thread open in the pane: {chatId, rootId, root, replies, target, loading}
 
 // ---------------------------------------------------------------- grouping (the rules)
@@ -97,7 +97,7 @@ function renderThread() {
     (GUESSED.has(tv.via?.get(m.id)) || tv.via?.get(m.id) === "manual" ? `<button data-th-unthread="${m.id}" title="Not part of this thread: show it in the channel">⇱</button>` : "");
   let prev = null;
   const rows = tv.replies.map((m) => {
-    const auto = GUESSED.has(tv.via?.get(m.id)) ? `<span class="tag auto" title="${esc(THREAD_RULE_LABEL[tv.via.get(m.id)])} · ⇱ moves it back">AUTO</span>` : "";
+    const auto = GUESSED.has(tv.via?.get(m.id)) ? `<span class="tag auto" title="${esc(THREAD_RULE_LABEL[tv.via.get(m.id)])} · ⇱ moves it back">${tv.via.get(m.id) === "ai" ? "AI" : "AUTO"}</span>` : "";
     const row = msgRow(m, prev, { actions: actions(m), tag: auto, cls: m.id === tv.focus ? "focus" : "" });
     prev = m;
     return row;

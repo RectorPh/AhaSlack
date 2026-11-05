@@ -14,7 +14,7 @@ def run(msgs, **opts):
     js = f"""
     const r = require({json.dumps(str(RULES))});
     const msgs = {json.dumps(msgs)};
-    const o = r.buildThreadsWith(msgs, {{ guesses: {json.dumps(opts.get("guesses", True))} }});
+    const o = r.buildThreadsWith(msgs, {{ guesses: {json.dumps(opts.get("guesses", True))}, rules: {json.dumps(opts.get("rules", "v2"))} }});
     console.log(JSON.stringify({{ root: Object.fromEntries(o.rootOf), via: Object.fromEntries(o.via) }}));
     """
     out = subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout
@@ -52,3 +52,19 @@ def test_short_answer_from_someone_in_the_thread():
     assert r["root"]["3"] == 1 and r["via"]["3"] == "answer"
     assert "3" not in run(base + [m(3, "z", 60, "dạ oke")])["root"]               # not in the thread
     assert "3" not in run(base + [m(3, "a", 60, "ok để anh xem lại toàn bộ luồng rồi báo team sau nhé")])["root"]
+
+
+def test_classic_rules_are_the_default():
+    base = [m(1, "a", 0, "q"), m(2, "b", 10, "trả lời", reply_to=1)]
+    r = run(base + [m(3, "b", 100, "mọi người xem thêm")], rules="classic")
+    assert r["root"]["3"] == 1 and r["via"]["3"] == "burst"     # 2-minute follow-up, as before
+    late = run([m(1, "a", 0, "q"), m(2, "b", 5 * 3600, "lại lỗi", reply_to=1)], rules="classic")
+    assert late["root"]["2"] == 1                                # no splitting in classic
+
+
+def test_local_ai_hint_wins():
+    base = [m(1, "a", 0, "q"), m(2, "b", 10, "trả lời", reply_to=1)]
+    r = run(base + [m(3, "c", 30, "đúng rồi", thread_hint=1)], rules="classic")
+    assert r["root"]["3"] == 1 and r["via"]["3"] == "ai"
+    r = run(base + [m(3, "b", 30, "chuyện khác", thread_hint=0)], rules="classic")
+    assert "3" not in r["root"] and r["via"]["3"] == "ai-none"  # the AI said no: no 2-minute guess

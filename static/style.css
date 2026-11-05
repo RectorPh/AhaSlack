@@ -721,3 +721,6 @@ body.resizing-pane iframe, body.resizing-pane .msg { pointer-events: none; }
 
 .tc-ask { position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); padding: 4px 0 12px; margin-top: 10px; z-index: 2; }
 .tc-wrap .tg-text.clamped { max-height: 110px; overflow: hidden; cursor: pointer; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+
+.ai-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-left: 24px; }
+.ai-row input { width: 140px; border: 1px solid var(--line); border-radius: 5px; padding: 2px 6px; background: var(--bg); }

@@ -17,7 +17,7 @@ function connectLive() {
     let ev;
     try { ev = JSON.parse(e.data); } catch { return; }
     if (ev.type === "hello" || ev.type === "ping") { liveOk = ev.connected !== false; showLiveStatus(); return; }
-    ({ message: onLiveMessage, edit: onLiveEdit, delete: onLiveDelete, read: onLiveRead, topic_read: onTopicRead })[ev.type]?.(ev);
+    ({ message: onLiveMessage, edit: onLiveEdit, delete: onLiveDelete, read: onLiveRead, topic_read: onTopicRead, thread_hints: onThreadHints })[ev.type]?.(ev);
   };
 }
 function showLiveStatus() {
@@ -88,6 +88,16 @@ function onLiveMessage(ev) {
   if (ev.mention) { state.mentions_unread = (state.mentions_unread || 0) + 1; updateMentionBadge(mentionData ? mentionData.unread : state.mentions_unread); }
   if (view === "unreads") unreadsSoon();
   if (ev.notify) notify(chat, m);
+}
+// The local AI placed some messages that were sent without Reply: regroup the open chat.
+function onThreadHints(ev) {
+  if (view !== "chat" || currentChat !== ev.chat_id) return;
+  let changed = false;
+  for (const m of chatMessages) {
+    const h = ev.hints[String(m.id)];
+    if (h !== undefined && m.thread_hint !== h) { m.thread_hint = h; changed = true; }
+  }
+  if (changed) rerenderChat();
 }
 function onLiveEdit(ev) {
   if (view !== "chat" || currentChat !== ev.chat_id) return;
@@ -233,6 +243,27 @@ document.body.insertAdjacentHTML("beforeend", `<button class="calm-toggle" id="c
 $("#calm-toggle").addEventListener("click", toggleCalm);
 ACTIONS.push({ group: "This app (not in Slack)", id: "calm", label: "Calm Space: hide everything but the conversation", def: "Mod+J", alt: ["Mod+Alt+C"], when: "any", run: () => toggleCalm() });
 
+// ---------------------------------------------------------------- local AI status (Preferences > Threads)
+let aiPullTimer = null;
+async function refreshAiStatus() {
+  const el = $("#ai-status");
+  if (!el) return;
+  let st;
+  try { st = await api("/api/thread-ai"); } catch { el.textContent = ""; return; }
+  const p = st.pull || {};
+  if (p.model && !p.done) {
+    el.innerHTML = `Downloading ${esc(p.model)}… ${p.pct || 0}%`;
+    clearTimeout(aiPullTimer); aiPullTimer = setTimeout(refreshAiStatus, 1500);
+  } else if (!st.running) {
+    el.innerHTML = `Ollama isn't running. Install it from <a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com</a> and open it.`;
+  } else if (!st.has_model) {
+    el.innerHTML = `${p.error ? `<span class="err">${esc(p.error)}</span> · ` : ""}Model not downloaded yet · <a href="#" id="ai-pull">Download ${esc(st.model)}</a>`;
+    $("#ai-pull").onclick = async (e) => { e.preventDefault(); await postJson("/api/thread-ai/pull", { model: st.model }); refreshAiStatus(); };
+  } else {
+    el.innerHTML = st.enabled ? `✓ Ready: new messages are placed as they arrive` : `✓ Ollama and ${esc(st.model)} are ready · turn it on above`;
+  }
+}
+
 // ---------------------------------------------------------------- Preferences (⌘,): reading, notifications, sidebar, Calm Space
 const _openShortcuts = openShortcuts;
 openShortcuts = function (tab = "prefs") {
@@ -248,6 +279,8 @@ openShortcuts = function (tab = "prefs") {
       if (t.name === "calm") { uiPrefs.calm = t.checked; applyCalm(); }
       if (t.name === "threads") { uiPrefs.threads = t.checked; if (view === "chat") rerenderChat(); }
       if (t.name === "threadGuess") { uiPrefs.threadGuess = t.checked; if (view === "chat") rerenderChat(); }
+      if (t.name === "threadAi") { uiPrefs.threadAi = { ...(uiPrefs.threadAi || {}), enabled: t.checked }; setTimeout(refreshAiStatus, 300); }
+      if (t.name === "threadAiModel") { uiPrefs.threadAi = { ...(uiPrefs.threadAi || {}), model: t.value.trim() || "qwen2.5:3b" }; setTimeout(refreshAiStatus, 300); }
       if (t.name === "sort") uiPrefs.sort = t.value;
       if (t.name === "dmNeedsYou") uiPrefs.dmNeedsYou = t.value;
       if (t.name === "show") uiPrefs.show = t.value;
@@ -264,7 +297,9 @@ openShortcuts = function (tab = "prefs") {
     ${state?.mark_read_enabled ? "" : `<div class="pref-sub err">Marking read on Telegram is off (mark_read_enabled in config.toml), so nothing is marked read yet.</div>`}
     <div class="sc-group">Threads</div>
     <label class="pref"><input type="checkbox" name="threads" ${uiPrefs.threads === false ? "" : "checked"}> Group replies into threads, like Slack (replies open on the right instead of in the channel)</label>
-    <label class="pref"><input type="checkbox" name="threadGuess" ${uiPrefs.threadGuess === false ? "" : "checked"}> Also guess: group follow-ups and short answers sent without Reply (marked AUTO; ⇱ undoes one)</label>
+    <label class="pref"><input type="checkbox" name="threadGuess" ${uiPrefs.threadGuess === false ? "" : "checked"}> Also group someone's follow-up sent within 2 minutes of their thread reply (marked AUTO; ⇱ undoes one)</label>
+    <label class="pref"><input type="checkbox" name="threadAi" ${uiPrefs.threadAi?.enabled ? "checked" : ""}> Local AI: let a small model on this Mac place messages sent without Reply (through Ollama; nothing leaves your Mac)</label>
+    <div class="pref ai-row">Model <input name="threadAiModel" value="${esc(uiPrefs.threadAi?.model || "qwen2.5:3b")}" spellcheck="false"> <span id="ai-status" class="sub">Checking…</span></div>
     <div class="pref-sub"><a href="#" onclick="closeShortcuts(); openThreadCheck(); return false;">🎯 Check how accurate the grouping is</a></div>
     <div class="sc-group">Sidebar</div>
     <label class="pref">Sort <select name="sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${(uiPrefs.sort || "priority") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
@@ -272,6 +307,7 @@ openShortcuts = function (tab = "prefs") {
     <label class="pref">Direct messages in Needs you <select name="dmNeedsYou">${Object.entries(DM_NEEDS_YOU).map(([k, l]) => `<option value="${k}" ${(uiPrefs.dmNeedsYou || "important") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
     <label class="pref"><input type="checkbox" name="calm" ${uiPrefs.calm ? "checked" : ""}> Calm Space: hide the sidebar and everything but the conversation (⌘J)</label>
     <div class="pref-sub" style="margin-top:14px">Keyboard shortcuts are in the other tab.</div>`;
+  refreshAiStatus();
 };
 
 connectLive();

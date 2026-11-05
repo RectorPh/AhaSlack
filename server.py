@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import re
 import os
 import sys
 import time
@@ -32,6 +33,7 @@ from agent import Manager
 from live import Live
 from db import MentionDB
 import stickers
+import threadai
 
 if __name__ == "__main__" and "--prepare" in sys.argv:
     # First-run warm-up from the setup window: by now uv has downloaded and installed every package.
@@ -169,6 +171,27 @@ class Inbox:
             if a > 0:
                 out[str(cid)] = a
         return out
+
+    # ------------------------------------------------------------- local AI for threads (Ollama)
+    def thread_ai(self) -> dict | None:
+        cfg = self.ui.get("threadAi") or {}
+        return {"model": cfg.get("model") or threadai.DEFAULT_MODEL} if cfg.get("enabled") else None
+
+    _ai_busy: set = set()
+
+    def judge_threads(self, chat_id: int, msgs: list[dict]) -> None:
+        """In the background: let the local AI place messages sent without Reply (once each)."""
+        ai = self.thread_ai()
+        if not ai or chat_id in self._ai_busy or not self.live:
+            return
+        self._ai_busy.add(chat_id)
+
+        async def run():
+            try:
+                await threadai.judge_window(self.db, chat_id, msgs, ai["model"], self.live.publish)
+            finally:
+                self._ai_busy.discard(chat_id)
+        asyncio.create_task(run())
 
     def save_state(self) -> None:
         STATE_FILE.write_text(json.dumps({"done": sorted(self.done), "shortcuts": self.shortcuts,
@@ -660,6 +683,12 @@ async def chat(chat_id: int, limit: int = 60, around: int | None = None, before:
     entry = next((e for e in (inbox.report or {}).get("chats", []) if e["id"] == chat_id), None)
     for m in win["messages"]:
         m["flags"] = triage.message_flags(m, inbox.cfg)
+    hints = inbox.db.thread_hints(chat_id, [m["id"] for m in win["messages"]])  # the local AI's earlier answers
+    for m in win["messages"]:
+        if m["id"] in hints:
+            m["thread_hint"] = hints[m["id"]]
+    if c.kind == "group":
+        inbox.judge_threads(chat_id, win["messages"])
     return {"chat": c.info(), "tier": entry and entry["tier"], "why": entry and entry["reasons"], "topic": t,
             "read_upto": t["read_upto"] if t else getattr(c.dialog.dialog, "read_inbox_max_id", 0), **win}
 
@@ -690,6 +719,26 @@ async def msg_reactions(chat_id: int, msg_id: int):
         return {"people": await tg.reactors(inbox.client, c, msg_id)}
     except PermissionError as exc:
         raise HTTPException(403, str(exc))
+
+
+@app.get("/api/thread-ai")
+async def thread_ai_status():
+    """Is the local AI for threads on, is Ollama running, is the model there, download progress."""
+    cfg = inbox.ui.get("threadAi") or {}
+    model = cfg.get("model") or threadai.DEFAULT_MODEL
+    return {"enabled": bool(cfg.get("enabled")), "model": model, **(await threadai.status(model)), "pull": threadai.PULL}
+
+
+@app.post("/api/thread-ai/pull")
+async def thread_ai_pull(request: Request):
+    """Download the model through Ollama (you clicked "Download model")."""
+    model = ((await request.json()).get("model") or threadai.DEFAULT_MODEL).strip()
+    if not re.fullmatch(r"[\w.\-:/]{1,80}", model):
+        raise HTTPException(400, "that doesn't look like an Ollama model name")
+    if not threadai.PULL.get("done", True) and threadai.PULL.get("model"):
+        return {"ok": True, "already": True}
+    asyncio.create_task(threadai.pull(model))
+    return {"ok": True}
 
 
 @app.get("/api/thread-labels")
