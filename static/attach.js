@@ -1,5 +1,5 @@
 "use strict";
-// Pictures and files in the message box, like Slack: paste (⌘V), drop, or click 📎 / ⌘O. They wait in
+// Pictures and files in the message box, like Slack: paste (⌘V), drop, or the ＋ by Send / ⌘O. They wait in
 // a tray above the box with previews; Enter sends them, with what you typed as the caption.
 // Works in the channel's box and in the thread pane's box (where they go into the thread).
 
@@ -134,32 +134,56 @@ document.addEventListener("drop", (e) => {
   if (!zone) return;
   addFiles(zone.id === "pane" ? "thread" : "chat", [...e.dataTransfer.files]);
 }, true);
-// 3. The 📎 button and ⌘O open the file picker for the box you're in
+// 3. The ＋ menu and ⌘O open the file picker for the box you are in
 const attachPicker = Object.assign(document.createElement("input"), { type: "file", multiple: true, hidden: true });
 document.body.appendChild(attachPicker);
 let pickerKind = "chat";
 attachPicker.addEventListener("change", () => { addFiles(pickerKind, [...attachPicker.files]); attachPicker.value = ""; });
-function pickFiles(kind = "chat") {
+function pickFiles(kind = "chat", accept = "") {
   if (kind === "chat" && view !== "chat") return toast("Open a conversation first");
   if (!needWrites()) return;
   pickerKind = kind;
+  attachPicker.accept = accept;
   attachPicker.click();
 }
 uploadFile = () => pickFiles(kindOf(document.activeElement));  // ⌘O (slack.js) now fills the tray too
-(function addAttachButton() {
-  const bar = $("#chat-composer .composer-bar");
-  bar.insertAdjacentHTML("afterbegin", `<button type="button" class="pk-btn" id="attach-btn" title="Attach pictures or files (⌘O) · or paste / drop them">📎</button>`);
-  $("#attach-btn").addEventListener("click", () => pickFiles("chat"));
-})();
-// The thread pane's box is rebuilt on every update: give it a 📎 and its tray back each time.
+// A "+" next to Send, like Slack, opens: photo or video / file. (Paste and drop still work anywhere.)
+const PLUS_HTML = `<button type="button" class="plus-btn" data-plus title="Attach a photo or a file (⌘O) · you can also paste or drop them">＋</button>`;
+function plusMenu(btn) {
+  const kind = kindOf(btn);
+  let menu = $("#plus-menu");
+  if (!menu) {
+    document.body.insertAdjacentHTML("beforeend", `<div class="ctx-menu plus-menu" id="plus-menu" hidden></div>`);
+    menu = $("#plus-menu");
+    menu.addEventListener("click", (e) => {
+      const it = e.target.closest("[data-pick]");
+      if (!it) return;
+      menu.hidden = true;
+      pickFiles(menu.dataset.kind, it.dataset.pick === "media" ? "image/*,video/*" : "");
+    });
+    document.addEventListener("mousedown", (e) => { if (!e.target.closest("#plus-menu, [data-plus]")) menu.hidden = true; });
+  }
+  if (!menu.hidden && menu.dataset.kind === kind) { menu.hidden = true; return; }
+  menu.dataset.kind = kind;
+  menu.innerHTML = `<button class="mi" data-pick="media"><span class="pm-ico">🖼</span>Photo or video</button>
+    <button class="mi" data-pick="file"><span class="pm-ico">📄</span>File <span class="k">${plainCombo("Mod+O")}</span></button>
+    <div class="sep"></div><div class="pm-note">Or paste (⌘V) / drop them into the conversation</div>`;
+  menu.hidden = false;
+  const r = btn.getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(r.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8)) + "px";
+  menu.style.top = Math.max(8, r.top - menu.offsetHeight - 6) + "px";
+}
+document.addEventListener("click", (e) => { const b = e.target.closest("[data-plus]"); if (b) { e.preventDefault(); plusMenu(b); } });
+function addPlus(form) {
+  const send = form && $(".composer-bar button.send", form);
+  if (send && !$("[data-plus]", form)) send.insertAdjacentHTML("beforebegin", PLUS_HTML);
+}
+addPlus($("#chat-composer"));
+// The thread pane's box is rebuilt on every update: give it its + and its tray back each time.
 const _renderThreadAttach = renderThread;
 renderThread = function () {
   _renderThreadAttach();
-  const bar = $("#thread-composer .composer-bar");
-  if (bar && !$(".pk-btn", bar)) {
-    bar.insertAdjacentHTML("afterbegin", `<button type="button" class="pk-btn" title="Attach pictures or files · or paste / drop them">📎</button>`);
-    $(".pk-btn", bar).addEventListener("click", () => pickFiles("thread"));
-  }
+  addPlus($("#thread-composer"));
   renderTray("thread");
 };
 // Switching conversations or closing the thread drops what was waiting.

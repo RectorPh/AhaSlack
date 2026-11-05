@@ -671,3 +671,11 @@ body.resizing-pane iframe, body.resizing-pane .msg { pointer-events: none; }
 .att-item:hover .att-x { opacity: 1; }
 .att-hint { font-size: 12px; color: var(--muted); padding-bottom: 4px; }
 .composer.has-files .send { background: var(--send); color: #fff; }
+
+/* "+" next to Send: photo or video / file */
+.plus-btn { margin-left: auto; border: 0; background: none; color: var(--muted); width: 28px; height: 28px; border-radius: 50%; cursor: pointer; font-size: 17px; line-height: 1; margin-right: 2px; flex: none; }
+.plus-btn:hover { background: var(--hover); color: var(--fg); }
+.plus-menu { min-width: 220px; }
+.plus-menu .mi .k { margin-left: auto; opacity: .6; font-size: 12px; }
+.plus-menu .pm-ico { width: 20px; text-align: center; }
+.plus-menu .pm-note { font-size: 12px; color: var(--muted); padding: 2px 16px 4px; }
