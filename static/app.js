@@ -1527,7 +1527,7 @@ function openSwitcher(mode = "all") {
   const input = $("#switcher-input");
   input.value = "";
   input.placeholder = { dms: "Jump to a direct message…", channels: "Jump to a channel…", people: "Find a person…",
-    compose: "New message to… (a person or a channel)", forward: "Forward to… (a person or a channel)" }[mode] || "Jump to…";
+    compose: "New message to… (a person or a channel)", forward: "Forward to… (a person or a channel)" }[mode] || "Jump to a conversation, topic, view or setting…";
   swSel = 0;
   renderSwitcher();
   input.focus();
@@ -1539,22 +1539,43 @@ function renderSwitcher() {
     : swMode === "people" ? (c) => c.kind === "dm"
     : swMode === "channels" ? (c) => c.kind !== "dm" && c.kind !== "bot"
     : swMode === "compose" || swMode === "forward" ? (c) => c.kind !== "channel" || c.id === state?.me.peer : () => true;
-  const specials = swMode === "all" ? [
+  const all = swMode === "all";
+  const views = all ? [
     { type: "view", view: "manager", name: "Inbox Manager", icon: "✦" },
-    { type: "view", view: "mentions", name: "Mentions & replies", icon: "@" },
+    { type: "view", view: "threads", name: "Threads", icon: "🧵", sub: state?.threads_unread ? `${state.threads_unread} new` : "" },
+    { type: "view", view: "mentions", name: "Mentions & replies", icon: "@", sub: state?.mentions_unread ? `${state.mentions_unread} unread` : "" },
+    { type: "view", view: "unreads", name: "All unreads", icon: "≡" },
   ].filter((s) => !q || score(s.name, q) > 0) : [];
-  const chats = q ? matchChats(q, filter, 40) : (recentChats().filter(filter).slice(0, 12).length ? recentChats().filter(filter).slice(0, 12) : allChats.filter(filter).slice(0, 12));
-  const topicItems = q && swMode === "all" ? Object.entries(state?.topics || {}).flatMap(([cid, ts]) => {
-    const c = chatById(Number(cid));
-    return c ? ts.filter((t) => score(`${t.title} ${c.name}`, q) > 0).map((t) => ({ type: "topic", chat: c, topic: t, s: score(t.title, q) })) : [];
-  }).sort((a, b) => b.s - a.s).slice(0, 12) : [];
-  swItems = [...specials, ...chats.map((c) => ({ type: "chat", chat: c })), ...topicItems];
+  let convos;
+  if (q) {  // chats and topics ranked together, so a topic isn't buried under weak chat matches
+    const chatHits = allChats.filter(filter).map((c) => ({ type: "chat", chat: c,
+      s: score(c.name, q) + (c.username && fold(c.username).startsWith(fold(q)) ? 30 : 0) })).filter((x) => x.s > 0);
+    const topicHits = all ? Object.entries(state?.topics || {}).flatMap(([cid, ts]) => {
+      const c = chatById(Number(cid));
+      return c ? ts.map((t) => {
+        const own = score(t.title, q), both = score(`${t.title} ${c.name}`, q);
+        return { type: "topic", chat: c, topic: t, s: own > 0 ? own + 1 : both >= 40 ? both - 5 : 0 };
+      }).filter((x) => x.s > 0) : [];
+    }) : [];
+    const cmdHits = all ? switcherCommands().map((c) => ({ ...c, type: "cmd", s: Math.max(score(c.name, q), c.keywords ? score(c.keywords, q) - 10 : 0) }))
+      .filter((c) => c.s >= 40).sort((x, y) => y.s - x.s).slice(0, 10) : [];
+    const strong = [...chatHits, ...topicHits].filter((x) => x.s >= 40);
+    // loose letter-by-letter matches only when there's little else
+    convos = [...chatHits, ...topicHits, ...cmdHits].filter((x) => x.s >= 40 || strong.length + cmdHits.length < 8)
+      .sort((x, y) => y.s - x.s || ((y.chat?.unread_count > 0) - (x.chat?.unread_count > 0)) || (y.topic?.last_ts || y.chat?.last_ts || 0) - (x.topic?.last_ts || x.chat?.last_ts || 0))
+      .slice(0, 40);
+  } else {
+    const recent = recentChats().filter(filter).slice(0, 12);
+    convos = (recent.length ? recent : allChats.filter(filter).slice(0, 12)).map((c) => ({ type: "chat", chat: c }));
+  }
+  swItems = [...views, ...convos];
   swSel = Math.min(swSel, Math.max(swItems.length - 1, 0));
   const list = $("#switcher-list");
-  if (!swItems.length) { list.innerHTML = `<div class="empty" style="padding:24px">No conversation matches “${esc(q)}”.</div>`; return; }
+  if (!swItems.length) { list.innerHTML = `<div class="empty" style="padding:24px">Nothing matches “${esc(q)}”.</div>`; return; }
   list.innerHTML = (q ? "" : `<div class="pop-head">Recent</div>`) + swItems.map((it, i) => {
-    if (it.type === "view") return `<div class="pop-item" data-i="${i}"><span class="ico">${it.icon}</span><span class="nm">${esc(it.name)}</span></div>`;
-    if (it.type === "topic") return `<div class="pop-item" data-i="${i}"><span class="ico">#</span><span class="nm">${esc(it.topic.title)} <span class="sub">· ${esc(it.chat.name)}</span></span>
+    if (it.type === "view") return `<div class="pop-item" data-i="${i}"><span class="ico">${it.icon}</span><span class="nm">${esc(it.name)}</span><span class="sub">${esc(it.sub || "")}</span></div>`;
+    if (it.type === "cmd") return `<div class="pop-item" data-i="${i}"><span class="ico">${it.icon || "⚙"}</span><span class="nm">${esc(it.name)}${it.on ? ` <span class="sub">✓ current</span>` : ""}</span><span class="sub">${esc(it.key || "setting")}</span></div>`;
+    if (it.type === "topic") return `<div class="pop-item" data-i="${i}"><span class="ico">#</span><span class="nm">${esc(it.topic.title)} <span class="sub">· topic in ${esc(it.chat.name)}</span></span>
       <span class="sub">${it.topic.unread_count ? `<b class="pill">${it.topic.unread_count > 99 ? "99+" : it.topic.unread_count}</b> ` : ""}${esc(ago(it.topic.last_ts))}</span></div>`;
     const c = it.chat;
     const icon = c.kind === "dm" || c.kind === "bot" ? chatAv(c, "s24") : `<span class="ico">${chatGlyph(c)}</span>`;
@@ -1564,11 +1585,51 @@ function renderSwitcher() {
   $$("#switcher-list .pop-item").forEach((el) => el.classList.toggle("sel", Number(el.dataset.i) === swSel));
   $("#switcher-list .pop-item.sel")?.scrollIntoView({ block: "nearest" });
 }
+
+// ⌘K also finds settings and commands: themes, sounds, Calm Space, reading options, and every
+// keyboard-shortcut action, so you can change things without opening Preferences.
+function switcherCommands() {
+  const out = [];
+  const add = (name, run, o = {}) => out.push({ name, run, ...o });
+  const pref = (k, v) => { uiPrefs[k] = v; saveUi(); renderSidebar(); if (view === "chat" && typeof rerenderChat === "function") rerenderChat(); };
+  add("Preferences", () => openShortcuts("prefs"), { icon: "⚙", key: plainCombo("Mod+,"), keywords: "settings options configure" });
+  add("Keyboard shortcuts", () => openShortcuts("keys"), { icon: "⌨", keywords: "keys hotkeys bindings" });
+  add("Files: pictures this app downloaded", () => openFiles(), { icon: "🗂", keywords: "files downloads images photos" });
+  if (typeof THEMES !== "undefined") {
+    const t = currentTheme();
+    for (const [k, l] of Object.entries(MODES)) add(`Appearance: ${l}`, () => setTheme({ mode: k }), { icon: "◐", on: t.mode === k, keywords: "theme mode dark light" });
+    for (const [k, p] of Object.entries(THEMES)) add(`Theme: ${p.label}`, () => setTheme({ name: k }), { icon: "🎨", on: t.name === k, keywords: "color sidebar theme" });
+    for (const [k, b] of Object.entries(BADGES)) add(`Unread badges: ${b.label}`, () => setTheme({ badge: k }), { icon: "●", on: t.badge === k, keywords: "badge color notification calm" });
+  }
+  if (typeof setMute === "function") {
+    const m = mutedUntil();
+    if (m) add("Turn sounds back on", () => setMute(0), { icon: "🔔", keywords: "unmute sound audio" });
+    else {
+      add("Mute sounds", () => setMute(Infinity), { icon: "🔕", key: plainCombo("Mod+Alt+Shift+M"), keywords: "silence sound audio quiet" });
+      add("Mute sounds for 1 hour", () => setMute(Date.now() + 3600e3), { icon: "🔕", keywords: "silence sound pause" });
+      add("Mute sounds until tomorrow", () => setMute(tomorrowAt9()), { icon: "🔕", keywords: "silence sound pause" });
+    }
+    add("Sound settings", () => openSoundSettings(), { icon: "🔔", keywords: "sound audio volume notification ding knock" });
+  }
+  add(`${uiPrefs.calm ? "Leave" : "Enter"} Calm Space`, () => toggleCalm(), { icon: "☾", key: plainCombo("Mod+J"), keywords: "focus zen hide sidebar" });
+  add(`Threads: ${uiPrefs.threads === false ? "group replies into threads" : "show replies inline (Telegram style)"}`, () => pref("threads", uiPrefs.threads === false), { icon: "🧵", keywords: "threads replies grouping" });
+  add(`Notifications: ${uiPrefs.notify === false ? "turn on" : "turn off"}`, () => pref("notify", uiPrefs.notify === false), { icon: "🔔", keywords: "notify alerts desktop" });
+  if (typeof READ_MODES !== "undefined") for (const [k, l] of Object.entries(READ_MODES)) add(`Mark as read: ${l}`, () => pref("readMode", k), { icon: "✓", on: (uiPrefs.readMode || "leftoff") === k, keywords: "read unread reading" });
+  for (const [k, l] of Object.entries(SORTS)) add(`Sidebar sort: ${l}`, () => pref("sort", k), { icon: "⇅", on: (uiPrefs.sort || "priority") === k, keywords: "sidebar order sort" });
+  for (const [k, l] of Object.entries(SHOWS)) add(`Sidebar show: ${l}`, () => pref("show", k), { icon: "☰", on: (uiPrefs.show || "all") === k, keywords: "sidebar filter show" });
+  for (const a of ACTIONS) {  // every shortcut action that works from anywhere
+    if (a.when !== "any" || ["quickSwitcher", "prefs", "calm", "mute"].includes(a.id)) continue;
+    const b = bindingsOf(a);
+    add(a.label, () => a.run(), { icon: "⌘", key: b.length ? plainCombo(b[0]) : "", keywords: a.group });
+  }
+  return out;
+}
 function chooseSwitcher(i) {
   const it = swItems[i];
   if (!it) return;
   closeSwitcher();
   if (swMode === "forward") return it.type === "chat" && finishForward(it.chat);
+  if (it.type === "cmd") return it.run();
   navigate(it.type === "view" ? { view: it.view } : { view: "chat", chatId: it.chat.id, topic: it.type === "topic" ? it.topic.id : undefined });
   if (swMode === "compose" && it.type === "chat") {  // ⌘N: land in the message box, ready to type
     composeMode = state.sending_enabled ? "send" : "ask";

@@ -105,8 +105,9 @@ Claude Code login. **It can only read**: it has no tool that sends, edits or mar
   desktop notifications for DMs and mentions and an unread count on the Dock icon.
 - **Reading like Slack:** start where you left off, a *New* divider, an unread banner,
   **⌥⌘U** to jump to the first unread, **Esc** to mark a chat read, **⇧Esc** for everything.
-- **Search** messages, channels and people (**⌘G**; **⌘F** in this chat) and **⌘K** to jump
-  anywhere.
+- **Search** messages, channels and people (**⌘G**; **⌘F** in this chat). **⌘K** jumps
+  anywhere: chats, Telegram topics, Threads and the other views, and settings and commands
+  ("dark", "jade", "mute", "calm", "upload"…), so you rarely need to open Preferences.
 - **Messages:** reply, edit, delete, unsend (**⌘Z**), forward, pin, react, remind me, and upload
   or drag in files.
 - **Stickers, emoji and gifts:** your own sticker sets, custom emoji, and animated (Lottie) and
