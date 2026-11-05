@@ -64,10 +64,13 @@ parts of Slack that make a busy inbox manageable.
 - The **Threads** view lists every thread you're in (you replied, or someone replied to you),
   with a badge for new replies, an **Unread** tab, **Mark as read / Mark unread** on each
   thread, and **Mark all as read**.
-- Grouping is **rule-based** today: Telegram reply chains, plus someone's quick follow-up
-  right after their own thread reply (marked *AUTO*; one click moves it back, and the
-  correction is remembered). There's a hook ready for a small local model to classify messages
-  into threads later.
+- Grouping is **rule-based** ([`static/thread-rules.js`](static/thread-rules.js)). Certain:
+  Telegram's Reply links, except that a reply coming hours later starts a fresh thread, and a
+  lone reply to an old message stays in the channel. Guessed (marked *AUTO*, one click moves it
+  back, and the correction is remembered): someone's follow-up within a minute of their thread
+  reply unless it's addressed to the group, and a short answer ("ok", "dạ", "đúng rồi", 👍) from
+  someone in the thread. Guessing can be turned off. There's a hook ready for a small local
+  model to classify messages into threads later.
 - Prefer Telegram's way? Turn threads off in Preferences (**⌘,**) to show replies inline again.
 
 ### 💬 Direct messages kept apart from groups

@@ -247,6 +247,7 @@ openShortcuts = function (tab = "prefs") {
       if (t.name === "notify") { uiPrefs.notify = t.checked; if (t.checked && "Notification" in window) Notification.requestPermission(); }
       if (t.name === "calm") { uiPrefs.calm = t.checked; applyCalm(); }
       if (t.name === "threads") { uiPrefs.threads = t.checked; if (view === "chat") rerenderChat(); }
+      if (t.name === "threadGuess") { uiPrefs.threadGuess = t.checked; if (view === "chat") rerenderChat(); }
       if (t.name === "sort") uiPrefs.sort = t.value;
       if (t.name === "dmNeedsYou") uiPrefs.dmNeedsYou = t.value;
       if (t.name === "show") uiPrefs.show = t.value;
@@ -263,6 +264,7 @@ openShortcuts = function (tab = "prefs") {
     ${state?.mark_read_enabled ? "" : `<div class="pref-sub err">Marking read on Telegram is off (mark_read_enabled in config.toml), so nothing is marked read yet.</div>`}
     <div class="sc-group">Threads</div>
     <label class="pref"><input type="checkbox" name="threads" ${uiPrefs.threads === false ? "" : "checked"}> Group replies into threads, like Slack (replies open on the right instead of in the channel)</label>
+    <label class="pref"><input type="checkbox" name="threadGuess" ${uiPrefs.threadGuess === false ? "" : "checked"}> Also guess: group follow-ups and short answers sent without Reply (marked AUTO; ⇱ undoes one)</label>
     <div class="sc-group">Sidebar</div>
     <label class="pref">Sort <select name="sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${(uiPrefs.sort || "priority") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
       Show <select name="show">${Object.entries(SHOWS).map(([k, l]) => `<option value="${k}" ${(uiPrefs.show || "all") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>

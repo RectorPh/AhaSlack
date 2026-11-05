@@ -226,6 +226,7 @@ def to_dict(m, entity, tz, text_chars: int, mine_reply_ids: set[int] | frozenset
         "topic_id": topic_of(m) if getattr(entity, "forum", False) else None,
         "image": image_info(m),
         "date": m.date.astimezone(tz).strftime("%Y-%m-%d %H:%M"),
+        "ts": m.date.timestamp(),  # exact time (seconds), for thread rules
         "sender": sender_info(m, entity),
         "text": text,
         "out": bool(m.out),

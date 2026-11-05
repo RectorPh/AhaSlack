@@ -1,58 +1,17 @@
 "use strict";
 // Slack-style threads on top of Telegram replies. Loaded after app.js, slack.js and live.js.
 //
-// Which thread a message belongs to is decided by rules, in order (first match wins):
-//   0. thread_hint from the server (reserved for a future local classifier model)
-//   1. reply chain: a reply joins the thread of the message it replies to (Telegram's own
-//      thread root in supergroups; elsewhere the app follows the chain)
-//   2. follow-up burst: right after someone replies in a thread, their next messages within
-//      2 minutes that aren't replies to anything join the same thread
-// The channel then shows only thread roots, with a "N replies" bar under each, and the thread
-// opens in the right pane with its own message box, like Slack.
+// Which thread a message belongs to: the rules live in thread-rules.js (certain ones from Telegram's
+// Reply links, guessed ones marked AUTO). The channel then shows only thread roots, with a
+// "N replies" bar under each, and the thread opens in the right pane with its own message box.
 
-const BURST_MIN = 2;
 const threadsOn = () => uiPrefs.threads !== false;
+const GUESSED = new Set(["burst", "answer"]);
 let threadView = null;  // the thread open in the pane: {chatId, rootId, root, replies, target, loading}
 
 // ---------------------------------------------------------------- grouping (the rules)
 function buildThreads(msgs) {
-  const byId = new Map(msgs.map((m) => [m.id, m]));
-  const rootOf = new Map();  // message id -> thread root id (only for replies)
-  const via = new Map();     // message id -> "reply" | "burst" | "hint"
-  const resolve = (m, depth = 0) => {
-    if (rootOf.has(m.id)) return rootOf.get(m.id);
-    let r = null;
-    if (m.thread_hint) { r = m.thread_hint; via.set(m.id, "hint"); }
-    else if (m.reply_to) {
-      const parent = byId.get(m.reply_to);
-      r = parent && depth < 50 ? (resolve(parent, depth + 1) ?? parent.id) : (m.thread_top || m.reply_to);
-      via.set(m.id, "reply");
-    }
-    if (r != null && r !== m.id) rootOf.set(m.id, r);
-    return rootOf.get(m.id) ?? null;
-  };
-  let prev = null;
-  for (const m of msgs) {
-    resolve(m);
-    const ov = threadOverride(m);
-    if (ov === 0) { rootOf.delete(m.id); via.delete(m.id); }
-    else if (ov) { rootOf.set(m.id, ov); via.set(m.id, "manual"); }
-    else if (!rootOf.has(m.id) && prev && rootOf.has(prev.id) && !m.reply_to && sameSender(prev, m) &&
-      minutes(m.date) - minutes(prev.date) <= BURST_MIN) {
-      rootOf.set(m.id, rootOf.get(prev.id));  // rule 2: a follow-up to their own thread reply
-      via.set(m.id, "burst");
-    }
-    prev = m;
-  }
-  const threads = new Map();  // root id -> {rootId, root, replies}
-  for (const m of msgs) {
-    const r = rootOf.get(m.id);
-    if (r == null) continue;
-    if (!threads.has(r)) threads.set(r, { rootId: r, root: byId.get(r) || null, replies: [] });
-    threads.get(r).replies.push(m);
-  }
-  for (const m of msgs) if (m.reply_count && !threads.has(m.id) && !rootOf.has(m.id)) threads.set(m.id, { rootId: m.id, root: m, replies: [] });
-  return { rootOf, via, threads };
+  return buildThreadsWith(msgs, { overrides: threadOverride, guesses: uiPrefs.threadGuess !== false });
 }
 const sameSender = (a, b) => (a.out && b.out) || (!a.out && !b.out && a.sender?.peer === b.sender?.peer);
 // Corrections you make ("Not part of this thread") win over the rules; kept for training a model later.
@@ -135,10 +94,10 @@ function renderThread() {
   const atBottom = !scrollBox || scrollBox.scrollHeight - scrollBox.scrollTop - scrollBox.clientHeight < 60;
   const actions = (m) => (state.sending_enabled ? `<button data-th-react="${m.id}" title="Add reaction">☺</button><button data-th-reply="${m.id}" title="Reply to this message in the thread">↩</button>` : "") +
     (m.link ? `<a class="ext" href="${esc(m.link)}" target="_blank" rel="noopener">↗</a>` : "") +
-    (tv.via?.get(m.id) === "burst" || tv.via?.get(m.id) === "manual" ? `<button data-th-unthread="${m.id}" title="Not part of this thread: show it in the channel">⇱</button>` : "");
+    (GUESSED.has(tv.via?.get(m.id)) || tv.via?.get(m.id) === "manual" ? `<button data-th-unthread="${m.id}" title="Not part of this thread: show it in the channel">⇱</button>` : "");
   let prev = null;
   const rows = tv.replies.map((m) => {
-    const auto = tv.via?.get(m.id) === "burst" ? `<span class="tag auto" title="Grouped here because they wrote it right after replying in this thread">AUTO</span>` : "";
+    const auto = GUESSED.has(tv.via?.get(m.id)) ? `<span class="tag auto" title="${esc(THREAD_RULE_LABEL[tv.via.get(m.id)])} · ⇱ moves it back">AUTO</span>` : "";
     const row = msgRow(m, prev, { actions: actions(m), tag: auto, cls: m.id === tv.focus ? "focus" : "" });
     prev = m;
     return row;
@@ -204,7 +163,7 @@ function addToThread(m) {
     tv.replies.some((x) => x.id === m.reply_to);
   if (!inThread) return false;
   tv.replies.push(m);
-  if (T.via.get(m.id) === "burst") (tv.via ||= new Map()).set(m.id, "burst");
+  if (GUESSED.has(T.via.get(m.id))) (tv.via ||= new Map()).set(m.id, T.via.get(m.id));
   renderThread();
   return true;
 }
