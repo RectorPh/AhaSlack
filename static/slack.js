@@ -99,7 +99,8 @@ async function finishForward(chat) {
   if (!src) return;
   try {
     const r = await msgPost(src.chatId, src.msgId, "forward", { to: chat.id });
-    toast(`✓ Forwarded to <b>${esc(r.to)}</b>`);
+    toast(`✓ Forwarded to <b>${esc(r.to || chat.name)}</b>`);
+    navigate({ view: "chat", chatId: chat.id });  // go see it there, like Telegram
   } catch (e) { toast(`Not forwarded: ${esc(e.message)}`, true); }
 }
 

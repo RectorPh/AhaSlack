@@ -858,7 +858,10 @@ function msgRow(m, prev, { actions = "", tag = "", cls = "", highlight = "", aft
   const reacts = (m.reactions || []).length ? `<div class="reacts">${m.reactions.map((r) =>
     `<button class="react-chip ${r.mine ? "mine" : ""}" data-emo="${esc(r.emoji)}" data-chat="${m.chat_id ?? ""}" data-msg="${m.id}" title="${r.mine ? "Remove your reaction" : "React with " + esc(r.emoji)}">${esc(r.emoji)} <b>${r.count}</b></button>`).join("")}</div>` : "";
   const pin = m.pinned ? `<div class="pin-tag">📌 Pinned</div>` : "";
-  const body = `${pin}${before}${text}${img}${reacts}${after}`;
+  // Forwarded: "Forwarded from X" and the original inside a quote bar, like Telegram and Slack
+  const fw = m.fwd || (m.forwarded ? { name: "" } : null);
+  const content = fw ? `<div class="fwd"><div class="fwd-head">↪ Forwarded${fw.name ? ` from ${fw.peer ? av({ peer: fw.peer, photo: fw.photo, name: fw.name }, "s16") : ""}<b>${esc(fw.name)}</b>` : ""}${fw.date && fw.date.slice(0, 10) !== m.date.slice(0, 10) ? ` <span class="sub">· ${esc(dayLabel(fw.date))}</span>` : ""}</div>${text}${img}</div>` : `${text}${img}`;
+  const body = `${pin}${before}${content}${reacts}${after}`;
   if (cont) {
     return `<div class="msg cont ${cls}" data-id="${m.id}"><div class="gutter">${time}</div><div class="msg-body">${body}</div>${bar}</div>`;
   }

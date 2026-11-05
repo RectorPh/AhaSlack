@@ -236,6 +236,7 @@ def to_dict(m, entity, tz, text_chars: int, mine_reply_ids: set[int] | frozenset
         "reply_count": reply_count(m),
         "media": media_kind(m),
         "forwarded": bool(m.fwd_from),
+        "fwd": fwd_info(m, tz),
         "link": msg_link(entity, m.id),
         "pinned": bool(getattr(m, "pinned", False)),
         "edited": bool(getattr(m, "edit_date", None)) and not getattr(m, "edit_hide", False),
@@ -244,6 +245,25 @@ def to_dict(m, entity, tz, text_chars: int, mine_reply_ids: set[int] | frozenset
                        "mine": r.chosen_order is not None}
                       for r in (getattr(getattr(m, "reactions", None), "results", None) or [])],
     }
+
+
+def fwd_info(m, tz) -> dict | None:
+    """Who a forwarded message originally came from, like Telegram's "Forwarded from X"."""
+    f = m.fwd_from
+    if not f:
+        return None
+    who, peer, photo = f.from_name, None, None  # from_name: someone who hides their account
+    fw = getattr(m, "forward", None)
+    ent = (getattr(fw, "sender", None) or getattr(fw, "chat", None)) if fw else None
+    if ent is not None:
+        who, peer, photo = utils.get_display_name(ent) or who, utils.get_peer_id(ent), photo_id(ent)
+    elif f.from_id is not None:
+        peer = utils.get_peer_id(f.from_id)
+    if not who and f.saved_from_peer is None and peer is None:
+        who = "a hidden account"
+    return {"name": who or "someone", "peer": peer, "photo": photo,
+            "date": f.date.astimezone(tz).strftime("%Y-%m-%d %H:%M") if f.date else None,
+            "post": f.channel_post}
 
 
 def text_mentions(m) -> list[list[int]]:

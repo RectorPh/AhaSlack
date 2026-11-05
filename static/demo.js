@@ -46,7 +46,7 @@
       const out = who === "me";
       const m = { id, chat_id: chatId, topic_id: x.topic ?? null, image: null, date: t.date, ts: t.ts, sender: out ? { ...ME, id: 1, bot: false } : P[who],
         text, out, mentioned: !!x.mention, reply_to_me: !!x.toMe, reply_to: x.reply ?? null, thread_top: x.reply ?? null, reply_count: 0, media: null,
-        forwarded: false, link: null, pinned: !!x.pinned, edited: false, reactions: x.r || [], flags: [...(x.mention ? ["mention"] : []), ...(x.toMe ? ["reply_to_me"] : []), ...(out ? ["from_me"] : [])] };
+        forwarded: !!x.fwd, fwd: x.fwd ? { name: P[x.fwd].name, peer: x.fwd, photo: null, date: t.date } : null, link: null, pinned: !!x.pinned, edited: false, reactions: x.r || [], flags: [...(x.mention ? ["mention"] : []), ...(x.toMe ? ["reply_to_me"] : []), ...(out ? ["from_me"] : [])] };
       return m;
     });
     for (const m of MSGS[chatId]) if (m.reply_to) m.thread_top = rootOf(chatId, m.reply_to);
@@ -77,6 +77,7 @@
     [2, "me", 1, 18, 10, "Anytime! The dashboard looks great."],
     [3, 201, 0, 10, 58, "Quick one: can we move our 1:1 to Thursday? Wednesday is packed with the launch."],
     [4, 201, 0, 10, 59, "Same time works for me if it works for you."],
+    [5, 201, 0, 11, 1, "We'll improve those parts step by step after the launch.", { fwd: 207 }],
   ]);
   build(-1002, [
     [101, 207, 0, 8, 30, "Morning dispatch: 412 orders, 38 drivers online, average pickup 6 min.", { topic: 10 }],
