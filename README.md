@@ -50,7 +50,7 @@ for you and tells you what needs you, who tagged you and what you can ignore.
 ## Set up
 
 ```bash
-git clone https://github.com/<you>/AhaSlack.git && cd AhaSlack
+git clone https://github.com/RectorPh/AhaSlack.git && cd AhaSlack
 uv run --script login.py          # api_id, api_hash, phone, the code Telegram sends, 2FA
 ```
 
