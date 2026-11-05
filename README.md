@@ -86,7 +86,7 @@ Sort by priority, recent activity or A→Z, show only unreads, **⭐ star** what
 
 <img alt="Calm Space: only the conversation is shown" src="docs/screenshots/calm.png" width="100%">
 
-One click (or **⌘⌥C**) hides the sidebar, the rail and every badge, leaving only the chat
+One click (or **⌘J**) hides the sidebar, the rail and every badge, leaving only the chat
 you're in, so you can read and write without the rest of the inbox pulling at you.
 
 ### ✦ Inbox Manager: ask your inbox what matters
@@ -103,7 +103,7 @@ Claude Code login. **It can only read**: it has no tool that sends, edits or mar
 - **Live sync:** new messages, edits, deletes and read states arrive as they happen, with
   desktop notifications for DMs and mentions and an unread count on the Dock icon.
 - **Reading like Slack:** start where you left off, a *New* divider, an unread banner,
-  **⌘J** to jump to the first unread, **Esc** to mark a chat read, **⇧Esc** for everything.
+  **⌥⌘U** to jump to the first unread, **Esc** to mark a chat read, **⇧Esc** for everything.
 - **Search** messages, channels and people (**⌘G**; **⌘F** in this chat) and **⌘K** to jump
   anywhere.
 - **Messages:** reply, edit, delete, unsend (**⌘Z**), forward, pin, react, remind me, and upload
@@ -111,6 +111,10 @@ Claude Code login. **It can only read**: it has no tool that sends, edits or mar
 - **Stickers, emoji and gifts:** your own sticker sets, custom emoji, and animated (Lottie) and
   video stickers inline. Gifts are view-only.
 - **Keyboard first:** Slack's full shortcut list, every one rebindable from **⌘/**.
+- **Themes:** light, dark or follow your Mac; nine sidebar themes (Aubergine, Jade, Lagoon,
+  Indigo, Ember, Forest, Graphite, Paper, Sand) or your own colors, in Preferences (**⌘,**).
+- **Sounds:** a short sound for DMs and mentions (pick from seven, with volume), synthesized
+  in the app.
 - **Telegram Topics as channels:** each topic gets its own messages, composer and mark-read.
 
 <img alt="A Telegram topic shown as a Slack channel" src="docs/screenshots/topics.png" width="100%">
@@ -145,12 +149,15 @@ send and mark read from the app (both are off by default).
 
 ## Run
 
-**Desktop app (macOS):**
+**Desktop app (macOS):** build the installer, then drag AhaSlack into Applications.
 
 ```bash
-cd electron && npm install && npm run dist   # builds electron/dist/mac-arm64/AhaSlack.app
-open dist/mac-arm64/AhaSlack.app
+cd electron && npm install && npm run dmg   # builds electron/dist/AhaSlack-1.0.0-arm64.dmg
+open dist/AhaSlack-1.0.0-arm64.dmg
 ```
+
+Or skip the disk image and install straight into Applications with `npm run install-app`.
+If you open the app from anywhere else, it offers to move itself into Applications.
 
 The app starts the local server for you and stops it when you quit. If you haven't logged in
 yet, it opens Terminal to do it. The app is unsigned, so the first time, right-click it and

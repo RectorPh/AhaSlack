@@ -4,6 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="/static/favicon.png">
+  <script>/* your theme before the first paint (theme.js keeps this up to date) */
+    try { const t = JSON.parse(localStorage.getItem("ahaslack-theme") || "null");
+      if (t) { if (t.mode && t.mode !== "system") document.documentElement.dataset.mode = t.mode;
+        for (const [k, v] of Object.entries(t.vars || {})) document.documentElement.style.setProperty(k, v); } } catch (e) {}</script>
   <title>AhaSlack</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap">
@@ -162,7 +166,7 @@
 <!-- Keyboard shortcuts (configurable) -->
 <div class="overlay" id="shortcuts" hidden>
   <div class="modal shortcuts">
-    <header class="modal-head"><h3>Keyboard shortcuts</h3><button class="icon-btn" data-close title="Close">✕</button></header>
+    <header class="modal-head"><h3>Preferences &amp; shortcuts</h3><button class="icon-btn" data-close title="Close">✕</button></header>
     <p class="modal-sub">Click a shortcut to change it, then press the new keys. Saved for this app.</p>
     <div class="sc-list" id="sc-list"></div>
     <div class="modal-foot"><button class="btn" id="sc-reset">Reset all to defaults</button></div>
@@ -200,5 +204,7 @@
 <script src="/static/live.js"></script>
 <script src="/static/picker.js"></script>
 <script src="/static/threads.js"></script>
+<script src="/static/theme.js"></script>
+<script src="/static/sounds.js"></script>
 </body>
 </html>

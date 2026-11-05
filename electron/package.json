@@ -9,7 +9,8 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --mac --dir",
-    "dmg": "electron-builder --mac dmg"
+    "dmg": "electron-builder --mac dmg",
+    "install-app": "electron-builder --mac --dir && rm -rf /Applications/AhaSlack.app && cp -R dist/mac-arm64/AhaSlack.app /Applications/ && open /Applications/AhaSlack.app"
   },
   "devDependencies": {
     "electron": "33.2.1",
@@ -18,20 +19,56 @@
   "build": {
     "appId": "app.ahaslack.desktop",
     "productName": "AhaSlack",
-    "directories": { "output": "dist", "buildResources": "build" },
-    "files": ["main.js", "package.json"],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "package.json"
+    ],
     "extraResources": [
       {
         "from": "..",
         "to": "server",
-        "filter": ["*.py", "config.example.toml", "static/**", "README.md", "LICENSE"]
+        "filter": [
+          "*.py",
+          "config.example.toml",
+          "static/**",
+          "README.md",
+          "LICENSE"
+        ]
       }
     ],
     "mac": {
       "category": "public.app-category.social-networking",
-      "target": ["dir", "dmg"],
+      "target": [
+        "dmg"
+      ],
       "icon": "build/icon.png",
       "identity": null
+    },
+    "dmg": {
+      "title": "AhaSlack",
+      "background": "build/background.png",
+      "iconSize": 100,
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "contents": [
+        {
+          "x": 150,
+          "y": 180,
+          "type": "file"
+        },
+        {
+          "x": 390,
+          "y": 180,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     }
   }
 }

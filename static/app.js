@@ -953,7 +953,7 @@ async function openChat(id, { focus, topic } = {}) {
   renderChatFeed();
   $("#jump-latest").hidden = !chatMeta.hasNewer;
   const target = focus && ($(`.msg[data-id="${focus}"]`, feed) || focusInThread(focus));
-  if (pendingJumpUnread) {  // ⌘J landed: show the "New" line, not the last read message
+  if (pendingJumpUnread) {  // jump-to-unread (⌥⌘U) landed: show the "New" line, not the last read message
     pendingJumpUnread = false;
     const line = $(".new-line", feed);
     if (line) return line.scrollIntoView({ block: "start" });
@@ -1598,7 +1598,7 @@ const ACTIONS = [
   ["Slack basics", "people", "Open the People view", "Mod+Shift+E", [], "any", () => openSwitcher("people")],
   ["Slack basics", "quickSwitcher", "Jump to a conversation", "Mod+K", ["Mod+T"], "any", () => ($("#switcher").hidden ? openSwitcher() : closeSwitcher())],
   // Navigate conversations and messages
-  ["Navigate conversations and messages", "jumpUnread", "Jump to the most recent unread message in a conversation", "Mod+J", [], "any", jumpToUnread],
+  ["Navigate conversations and messages", "jumpUnread", "Jump to the most recent unread message in a conversation", "Mod+Alt+U", [], "any", jumpToUnread],
   ["Navigate conversations and messages", "prevUnread", "Jump to previous unread channel or DM", "Alt+Shift+ArrowUp", [], "any", () => stepChat(-1, true)],
   ["Navigate conversations and messages", "nextUnread", "Jump to next unread channel or DM", "Alt+Shift+ArrowDown", [], "any", () => stepChat(1, true)],
   ["Navigate conversations and messages", "prevChat", "Jump to previous channel or DM in the sidebar", "Alt+ArrowUp", [], "any", () => stepChat(-1, false)],
@@ -1753,7 +1753,7 @@ function openHome() {  // Slack's Home: the sidebar of conversations
   setTimeout(() => ($("#sections .sb-item.active") || $("#sections .sb-item") || $(".sb-top .sb-item"))?.focus(), 60);
 }
 let pendingJumpUnread = false;
-function jumpToUnread() {  // ⌘J: the first unread message of this conversation
+function jumpToUnread() {  // ⌥⌘U: the first unread message of this conversation
   if (view !== "chat") return;
   const line = $("#chat-feed .new-line");
   if (line) return line.scrollIntoView({ block: "start" });
@@ -1987,6 +1987,7 @@ function resizeSidebar(delta) {
 
 async function loadPrefs() {
   try { const p = await api("/api/prefs"); overrides = p.shortcuts || {}; uiPrefs = p.ui || {}; } catch { overrides = {}; }
+  if (typeof applyTheme === "function") applyTheme();
   if (typeof applyCalm === "function") applyCalm();
   renderSidebar();
   const jump = bindingOf(action("quickSwitcher"));

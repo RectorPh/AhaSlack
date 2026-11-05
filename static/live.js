@@ -134,13 +134,15 @@ document.addEventListener("click", () => {  // browsers only ask after a user ge
   if ("Notification" in window && Notification.permission === "default" && uiPrefs.notify !== false) Notification.requestPermission();
 }, { once: true });
 function notify(chat, m) {
-  if (uiPrefs.notify === false || !("Notification" in window) || Notification.permission !== "granted") return;
+  if (uiPrefs.notify === false) return;
   const looking = document.hasFocus() && !document.hidden && view === "chat" && currentChat === chat.id;
   if (looking) return;
+  playNotifySound();  // sounds.js
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
   const who = m.sender?.name || chat.name;
   const n = new Notification(chat.kind === "dm" ? who : `${who} in ${chat.name}`, {
     body: (m.text || (m.media ? `[${m.media}]` : "")).slice(0, 180),
-    tag: `${chat.id}`, silent: false,
+    tag: `${chat.id}`, silent: soundsOn(),  // our own sound instead of the system's
   });
   n.onclick = () => { window.focus(); navigate({ view: "chat", chatId: chat.id, focus: m.id, topic: m.topic_id || undefined }); n.close(); };
 }
@@ -222,11 +224,11 @@ function toggleCalm() {
   uiPrefs.calm = !uiPrefs.calm;
   applyCalm();
   saveUi();
-  toast(uiPrefs.calm ? "☾ Calm Space: just the conversation. Press it again (or ⌘⌥C) to leave." : "Back to the full view", false, 2500);
+  toast(uiPrefs.calm ? "☾ Calm Space: just the conversation. Press ⌘J again to leave." : "Back to the full view", false, 2500);
 }
-document.body.insertAdjacentHTML("beforeend", `<button class="calm-toggle" id="calm-toggle" title="Hide everything but the conversation (⌘⌥C)">☾ Calm Space</button>`);
+document.body.insertAdjacentHTML("beforeend", `<button class="calm-toggle" id="calm-toggle" title="Hide everything but the conversation (⌘J)">☾ Calm Space</button>`);
 $("#calm-toggle").addEventListener("click", toggleCalm);
-ACTIONS.push({ group: "This app (not in Slack)", id: "calm", label: "Calm Space: hide everything but the conversation", def: "Mod+Alt+C", alt: [], when: "any", run: () => toggleCalm() });
+ACTIONS.push({ group: "This app (not in Slack)", id: "calm", label: "Calm Space: hide everything but the conversation", def: "Mod+J", alt: ["Mod+Alt+C"], when: "any", run: () => toggleCalm() });
 
 // ---------------------------------------------------------------- Preferences (⌘,): reading, notifications, sidebar, Calm Space
 const _openShortcuts = openShortcuts;

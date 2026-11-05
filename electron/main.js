@@ -117,7 +117,7 @@ function buildMenu() {
     ] },
     { label: "Edit", submenu: [{ role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "pasteAndMatchStyle" }, { role: "selectAll" }] },
     { label: "View", submenu: [
-      { label: "Calm Space", accelerator: "CmdOrCtrl+Alt+C", click: page("toggleCalm()") },
+      { label: "Calm Space", accelerator: "CmdOrCtrl+J", click: page("toggleCalm()") },
       { type: "separator" }, { role: "reload" }, { role: "toggleDevTools" }, { type: "separator" },
       { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" },
     ] },
@@ -129,8 +129,25 @@ function buildMenu() {
   ]));
 }
 
+// Notification sounds play without a click first (they're synthesized in the page).
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+
+// Opened from the disk image or a download folder: offer to move into Applications, like most Mac apps.
+async function offerMoveToApplications() {
+  if (!app.isPackaged || app.isInApplicationsFolder()) return;
+  const { response } = await dialog.showMessageBox({
+    type: "question", buttons: ["Move to Applications", "Not now"], defaultId: 0, cancelId: 1,
+    message: "Move AhaSlack to your Applications folder?",
+    detail: "Then you can open it from Launchpad, Spotlight and the Dock like any other app.",
+  });
+  if (response === 0) {
+    try { app.moveToApplicationsFolder(); } catch (e) { dialog.showErrorBox("Couldn't move AhaSlack", String(e.message || e)); }
+  }
+}
+
 app.whenReady().then(async () => {
   buildMenu();
+  await offerMoveToApplications();
   if (!(await startServer())) { quitting = true; return app.quit(); }
   createWindow();
 });
