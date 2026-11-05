@@ -121,47 +121,127 @@ Claude Code login. **It can only read**: it has no tool that sends, edits or mar
 
 ## Try it without a Telegram account
 
-Start the server (see [Run](#run)) and open <http://127.0.0.1:8765/?demo>. Demo mode fills the
+Start the server with `uv run --script server.py` and open <http://127.0.0.1:8765/?demo>. Demo mode fills the
 app with a made-up team and never contacts Telegram. You can also open a specific screen:
 `?demo=hero`, `mentions`, `threads`, `calm`, `manager` or `topics`. These are the screens in
 the screenshots above.
 
-## Requirements
+## Getting started
 
-- macOS for the desktop app (the web version runs anywhere Python does)
-- [uv](https://docs.astral.sh/uv/) for Python: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- A Telegram account and an API id/hash from <https://my.telegram.org> → *API development tools*
-- For the Inbox Manager: [Claude Code](https://claude.com/claude-code) installed and logged in
-  (it uses your Claude Code login; no API key needed)
-- To build the desktop app: Node.js 18+
+Setting up takes about 10 minutes. You only do it once. On first launch, the app opens a
+**setup guide** that walks you through installing uv and steps 3 to 6, and ticks each one off as you finish it
+(you can reopen it any time from **Help → Setup Guide**). Here are the same steps written out.
 
-## Set up
+### Step 1: Install the tools
 
-```bash
-git clone https://github.com/RectorPh/AhaSlack.git && cd AhaSlack
-uv run --script login.py          # api_id, api_hash, phone, the code Telegram sends, 2FA
-```
+| Tool | Why | How |
+|---|---|---|
+| [uv](https://docs.astral.sh/uv/) | runs AhaSlack's Python engine and fetches its packages | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| [Node.js](https://nodejs.org) 18+ | builds the Mac app (only needed once) | `brew install node`, or the installer from nodejs.org |
+| git | downloads the code | comes with Xcode's command line tools: `xcode-select --install` |
 
-Login stores everything in `~/.config/telegram-inbox/` (owner-only). It also creates
-`~/.config/telegram-inbox/config.toml`: put your name and handle in `my_keywords`, your
-timezone in `timezone`, and turn on `sending_enabled` / `mark_read_enabled` if you want to
-send and mark read from the app (both are off by default).
-
-## Run
-
-**Desktop app (macOS):** build the installer, then drag AhaSlack into Applications.
+### Step 2: Build and install the app
 
 ```bash
-cd electron && npm install && npm run dmg   # builds electron/dist/AhaSlack-1.0.0-arm64.dmg
-open dist/AhaSlack-1.0.0-arm64.dmg
+git clone https://github.com/RectorPh/AhaSlack.git
+cd AhaSlack/electron
+npm install
+npm run dmg                          # builds dist/AhaSlack-1.0.0-arm64.dmg
+open dist/AhaSlack-1.0.0-arm64.dmg   # then drag AhaSlack onto Applications
 ```
 
-Or skip the disk image and install straight into Applications with `npm run install-app`.
-If you open the app from anywhere else, it offers to move itself into Applications.
+Open AhaSlack from Applications. The app isn't signed by Apple, so the first time macOS may say
+it can't check the developer. If it does, **right-click the app → Open → Open**. You only do this once.
 
-The app starts the local server for you and stops it when you quit. If you haven't logged in
-yet, it opens Terminal to do it. The app is unsigned, so the first time, right-click it and
-choose **Open**. Server logs are in `~/Library/Logs/AhaSlack/`.
+### Step 3: Get your Telegram API keys
+
+Every app that reads your own Telegram account needs a pair of keys from Telegram: an
+**api_id** (a number) and an **api_hash** (a long code). They're free and take two minutes:
+
+1. Go to **<https://my.telegram.org>** and enter your phone number in international format,
+   for example `+84 912 345 678`.
+2. Telegram sends a confirmation code **to your Telegram app** (a message from "Telegram"),
+   not by SMS. Type it in on the website.
+3. Click **API development tools**.
+4. Fill in **Create new application**. Only the first two fields matter:
+
+   | Field | What to enter |
+   |---|---|
+   | App title | `AhaSlack` |
+   | Short name | `ahaslack` (5 to 32 letters or numbers) |
+   | URL | leave empty |
+   | Platform | Desktop |
+   | Description | leave empty |
+
+5. Click **Create application**. The page now shows **App api_id** and **App api_hash**. Keep
+   it open for the next step.
+
+> **Keep the api_hash private.** Together with a login, it gives access to your account.
+> AhaSlack stores it only on your Mac.
+
+### Step 4: Log in to Telegram
+
+In the setup guide, click **Log in with Terminal**. Without the app, run
+`uv run --script login.py` in the AhaSlack folder. Terminal asks four things:
+
+```text
+api_id: 12345678                                  ← the number from step 3
+api_hash (hidden):                                ← paste it; nothing shows as you type
+Please enter your phone (or bot token): +84912345678
+Please enter the code you received: 12345         ← sent to your Telegram app
+Please enter your password:                       ← only if you use two-step verification
+Logged in as Your Name (@yourhandle).
+```
+
+That's it. AhaSlack now shows up as a new device in Telegram → **Settings → Devices**, where
+you can log it out at any time. Telegram also sends you a "new login" message; that's expected.
+You type your code and password in Terminal, never in the app's window.
+
+### Step 5: Make it yours
+
+Logging in creates `~/.config/telegram-inbox/config.toml` (the setup guide has an
+**Open config.toml** button). Edit a few lines:
+
+```toml
+my_keywords = ["Linh", "chị Linh", "linhtran"]    # names people use for you → "Needs you"
+timezone = "Asia/Ho_Chi_Minh"
+sending_enabled = true     # send, reply, react and edit from AhaSlack (off by default)
+mark_read_enabled = true   # mark chats read on Telegram when you open them, like Slack
+vip_users = ["@my_manager"]           # optional: people whose messages always matter
+ignore_chats = ["Crypto signals"]     # optional: groups to treat as noise
+```
+
+@mentions and replies to you are found automatically; `my_keywords` catches the times people
+write your name without tagging you. Save the file and reopen AhaSlack.
+
+### Step 6 (optional): Turn on the Inbox Manager
+
+The Inbox Manager uses [Claude Code](https://claude.com/claude-code) and your Claude Code login,
+so no API key is needed. Install it, run `claude` once in Terminal to log in, and reopen AhaSlack.
+Everything else works without it.
+
+### Then: open AhaSlack
+
+The first start takes about a minute while it downloads its Python packages and reads your
+chats. After that it opens in seconds and stays in sync live.
+
+### If something goes wrong
+
+| Problem | Fix |
+|---|---|
+| my.telegram.org says **ERROR** when creating the app | Try a different short name, turn off any VPN or ad blocker, or try again later. It's a known quirk of that site. |
+| The login code never arrives | It's sent to your **Telegram app**, in a message from "Telegram", not by SMS. Open Telegram on your phone or desktop. |
+| "Telegram session expired or was revoked" | You (or Telegram) logged this device out. Open **Help → Setup Guide** and do step 4 again. |
+| macOS says it **can't check the developer** | Right-click AhaSlack in Applications → **Open** → **Open**. |
+| The app says its server didn't start | **Help → Server Log** shows why. Check that `uv` works in Terminal (`uv --version`). |
+| You want to disconnect | `uv run --script login.py --logout`, or Telegram → Settings → Devices → end the AhaSlack session. |
+
+## Other ways to run it
+
+**Desktop app without a disk image:** `npm run install-app` (in `electron/`) builds the app and
+copies it straight into Applications. If you open the app from anywhere else, it offers to
+move itself there. The app starts its local server for you and stops it when you quit.
+Server logs are in `~/Library/Logs/AhaSlack/`.
 
 **In a browser:**
 

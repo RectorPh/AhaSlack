@@ -25,7 +25,9 @@
     },
     "files": [
       "main.js",
-      "package.json"
+      "package.json",
+      "onboarding.html",
+      "onboarding-preload.js"
     ],
     "extraResources": [
       {

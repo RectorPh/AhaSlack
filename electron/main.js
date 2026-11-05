@@ -1,7 +1,7 @@
 // AhaSlack: the desktop shell. It starts the local Python server (server.py, run with uv),
 // waits for it, and shows the page in a native macOS window. The server only listens on
 // 127.0.0.1; links to the web open in your browser.
-const { app, BrowserWindow, Menu, shell, dialog } = require("electron");
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require("electron");
 const { spawn, execFileSync } = require("child_process");
 const fs = require("fs");
 const http = require("http");
@@ -38,11 +38,9 @@ function ping() {
 
 async function startServer() {
   if (await ping()) return true;  // already running (for example `uv run --script server.py` in a terminal)
+  const st = setupStatus();
+  if (!st.uv || !st.session) return "setup";  // first run: the onboarding window walks you through it
   const uv = findUv();
-  if (!uv) {
-    await dialog.showMessageBox({ type: "error", message: "AhaSlack needs uv", detail: "Install it with:\n  curl -LsSf https://astral.sh/uv/install.sh | sh\nthen open AhaSlack again." });
-    return false;
-  }
   fs.mkdirSync(LOG_DIR, { recursive: true });
   const log = fs.createWriteStream(path.join(LOG_DIR, "server.log"), { flags: "a" });
   server = spawn(uv, ["run", "--script", "server.py"], {
@@ -62,24 +60,71 @@ async function startServer() {
     if (exited) break;
     await new Promise((r) => setTimeout(r, 500));
   }
-  if (/Not logged in|session expired/i.test(serverLog)) return loginFlow();
+  if (/Not logged in|session expired/i.test(serverLog)) return "setup";
   await dialog.showMessageBox({ type: "error", message: "AhaSlack's server didn't start", detail: serverLog.slice(-1500) || "No output." });
   return false;
 }
 
-// First run: log in to Telegram in Terminal (you type the code and 2FA password there, never in the app).
-async function loginFlow() {
-  const { response } = await dialog.showMessageBox({
-    type: "info", buttons: ["Open Terminal to log in", "Quit"], defaultId: 0,
-    message: "Log in to Telegram first",
-    detail: "AhaSlack reads your Telegram with your own login. A Terminal window will ask for your api_id and api_hash (from my.telegram.org), your phone number and the code Telegram sends you. Open AhaSlack again when it says \"Logged in\".",
-  });
-  if (response === 0) {
-    const cmd = `cd ${JSON.stringify(SERVER_DIR)} && ${JSON.stringify(findUv())} run --script login.py`;
-    execFileSync("/usr/bin/osascript", ["-e", `tell application "Terminal" to do script ${JSON.stringify(cmd)}`, "-e", 'tell application "Terminal" to activate']);
-  }
-  return false;
+// ---------------------------------------------------------------- first run: onboarding
+// A window that walks you through connecting Telegram: install uv, get API keys at my.telegram.org,
+// log in (in Terminal, so your code and password never pass through the app), edit config.toml.
+// Each step ticks itself off by looking at the files the login creates.
+const TG_HOME = process.env.TG_INBOX_HOME || path.join(os.homedir(), ".config", "telegram-inbox");
+const shq = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+let claudePath = null;
+function findClaude() {
+  if (claudePath) return claudePath;
+  const candidates = [path.join(os.homedir(), ".local/bin/claude"), path.join(os.homedir(), ".claude/local/claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"];
+  claudePath = candidates.find((c) => fs.existsSync(c)) || null;
+  return claudePath;
 }
+function setupStatus() {
+  const has = (f) => fs.existsSync(path.join(TG_HOME, f));
+  return { uv: !!findUv(), creds: has("credentials.json"), session: has("inbox.session"), config: has("config.toml"), claude: !!findClaude() };
+}
+function inTerminal(cmd) {
+  execFileSync("/usr/bin/osascript", ["-e", `tell application "Terminal" to do script ${JSON.stringify(cmd)}`, "-e", 'tell application "Terminal" to activate']);
+}
+let setupWin = null;
+function showOnboarding() {
+  if (setupWin) return setupWin.focus();
+  setupWin = new BrowserWindow({
+    width: 1080, height: 740, minWidth: 840, minHeight: 560, title: "Welcome to AhaSlack",
+    titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 14 }, backgroundColor: "#4b1f52", show: false,
+    webPreferences: { preload: path.join(__dirname, "onboarding-preload.js"), contextIsolation: true, sandbox: true },
+  });
+  setupWin.loadFile(path.join(__dirname, "onboarding.html"));
+  setupWin.once("ready-to-show", () => setupWin.show());
+  setupWin.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  setupWin.webContents.on("will-navigate", (e) => e.preventDefault());
+  setupWin.on("closed", () => { setupWin = null; if (!win && !quitting) app.quit(); });
+}
+ipcMain.handle("setup:status", () => setupStatus());
+ipcMain.handle("setup:act", async (_e, name) => {
+  if (name === "install-uv") inTerminal("curl -LsSf https://astral.sh/uv/install.sh | sh");
+  else if (name === "open-mytg") shell.openExternal("https://my.telegram.org/auth");
+  else if (name === "login") {
+    const uv = findUv();
+    if (!uv) return dialog.showMessageBox(setupWin, { type: "info", message: "Install uv first (step 1)." });
+    inTerminal(`cd ${shq(SERVER_DIR)} && ${shq(uv)} run --script login.py`);
+  } else if (name === "open-config") {
+    const f = path.join(TG_HOME, "config.toml");
+    if (!fs.existsSync(f)) {
+      fs.mkdirSync(TG_HOME, { recursive: true, mode: 0o700 });
+      fs.copyFileSync(path.join(SERVER_DIR, "config.example.toml"), f);
+      fs.chmodSync(f, 0o600);
+    }
+    execFileSync("/usr/bin/open", ["-t", f]);  // your default text editor
+  } else if (name === "open-claude") shell.openExternal("https://claude.com/claude-code");
+  else if (name === "open-log") shell.openPath(path.join(LOG_DIR, "server.log"));
+  else if (name === "open-readme") shell.openExternal("https://github.com/RectorPh/AhaSlack#getting-started");
+  else if (name === "continue") {
+    const ok = await startServer();
+    if (ok === true) { if (!win) createWindow(); setupWin?.close(); }
+    else if (ok === "setup") dialog.showMessageBox(setupWin, { type: "info", message: "Not connected yet", detail: "Finish steps 1 to 3 first. If you did, the login may have expired: log in again in step 3." });
+  }
+  return setupStatus();
+});
 
 function createWindow() {
   win = new BrowserWindow({
@@ -124,6 +169,7 @@ function buildMenu() {
     { role: "windowMenu" },
     { role: "help", submenu: [
       { label: "Keyboard Shortcuts", accelerator: "CmdOrCtrl+/", click: page("openShortcuts()") },
+      { label: "Setup Guide", click: () => showOnboarding() },
       { label: "Server Log", click: () => shell.openPath(path.join(LOG_DIR, "server.log")) },
     ] },
   ]));
@@ -148,7 +194,9 @@ async function offerMoveToApplications() {
 app.whenReady().then(async () => {
   buildMenu();
   await offerMoveToApplications();
-  if (!(await startServer())) { quitting = true; return app.quit(); }
+  const ok = await startServer();
+  if (ok === "setup") return showOnboarding();
+  if (!ok) { quitting = true; return app.quit(); }
   createWindow();
 });
 app.on("activate", () => { if (!win && server !== undefined) createWindow(); });

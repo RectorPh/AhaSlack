@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>Welcome to AhaSlack</title>
+<style>
+  :root { --side: #4b1f52; --chrome: #3b1640; --active: #1d6fa5; --ok: #2bac76; --bg: #fff; --fg: #1d1c1d; --muted: #616061; --line: #e2e2e2; --soft: #f6f6f6; --code: #f3eef4; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1a1d21; --fg: #d1d2d3; --muted: #a3a3a5; --line: #34373b; --soft: #222529; --code: #2a2230; } }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--fg); background: var(--bg); }
+  .app { display: grid; grid-template-columns: 270px 1fr; height: 100vh; }
+  aside { background: var(--side); color: #e8dcea; padding: 52px 16px 20px; -webkit-app-region: drag; display: flex; flex-direction: column; }
+  aside h1 { color: #fff; font-size: 21px; margin: 0 8px 4px; }
+  aside .sub { color: #bfa9c3; font-size: 13px; margin: 0 8px 20px; }
+  .nav { -webkit-app-region: no-drag; display: flex; flex-direction: column; gap: 2px; }
+  .nav button { display: flex; align-items: center; gap: 10px; border: 0; background: none; color: inherit; font: inherit; text-align: left; padding: 7px 10px; border-radius: 7px; cursor: pointer; }
+  .nav button:hover { background: #ffffff14; }
+  .nav button.on { background: var(--active); color: #fff; }
+  .tick { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #ffffff55; display: grid; place-items: center; font-size: 12px; font-weight: 800; flex: none; }
+  .done .tick { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .opt .tick { border-style: dashed; }
+  aside .foot { margin-top: auto; font-size: 12px; color: #bfa9c3; padding: 0 8px; -webkit-app-region: no-drag; }
+  main { overflow-y: auto; padding: 44px 56px 40px; }
+  .step { max-width: 720px; display: none; }
+  .step.on { display: block; }
+  .kicker { color: var(--active); font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+  h2 { font-size: 26px; margin: 4px 0 8px; }
+  .lead { color: var(--muted); font-size: 16px; margin: 0 0 22px; }
+  ol.how { padding-left: 0; list-style: none; counter-reset: s; margin: 0 0 22px; }
+  ol.how > li { counter-increment: s; position: relative; padding: 0 0 14px 40px; }
+  ol.how > li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 26px; height: 26px; border-radius: 50%; background: var(--soft); border: 1px solid var(--line); display: grid; place-items: center; font-weight: 800; font-size: 13px; }
+  code, kbd { font-family: ui-monospace, Menlo, monospace; font-size: 13px; background: var(--code); border-radius: 4px; padding: 1px 5px; }
+  .cmd { display: flex; align-items: center; gap: 8px; background: var(--code); border-radius: 8px; padding: 8px 10px; margin: 6px 0; font-family: ui-monospace, Menlo, monospace; font-size: 13px; overflow-x: auto; }
+  .cmd span { flex: 1; white-space: nowrap; }
+  .btn { border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 7px; padding: 7px 14px; font: inherit; font-weight: 700; cursor: pointer; }
+  .btn:hover { background: var(--soft); }
+  .btn.primary { background: #007a5a; border-color: #007a5a; color: #fff; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.small { padding: 3px 10px; font-size: 13px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 18px 0; }
+  .status { display: flex; align-items: center; gap: 8px; border-radius: 8px; padding: 10px 14px; margin: 16px 0; font-weight: 600; }
+  .status.ok { background: #2bac7622; color: var(--ok); }
+  .status.wait { background: var(--soft); color: var(--muted); }
+  .note { border-left: 3px solid #e8912d; background: #e8912d14; padding: 8px 12px; border-radius: 4px; font-size: 14px; margin: 14px 0; }
+  .safe { border-left-color: var(--ok); background: #2bac7614; }
+  /* a sketch of Telegram's "Create new application" form */
+  .form { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; max-width: 460px; background: var(--soft); font-size: 14px; margin: 8px 0 4px; }
+  .form .f { display: grid; grid-template-columns: 130px 1fr; gap: 8px; align-items: center; margin: 6px 0; }
+  .form .f span { color: var(--muted); text-align: right; }
+  .form .f b { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 3px 8px; font-weight: 500; }
+  .form .f i { color: var(--muted); font-size: 13px; }
+  .term { background: #1d1c1d; color: #d1d2d3; border-radius: 10px; padding: 14px 16px; font: 13px/1.7 ui-monospace, Menlo, monospace; max-width: 600px; }
+  .term .p { color: #8ec8f2; }
+  .term .y { color: #f2cd6c; }
+  .term .g { color: #6fd39b; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <h1>Welcome to AhaSlack</h1>
+    <p class="sub">Connect your Telegram in about 5 minutes.</p>
+    <div class="nav" id="nav">
+      <button data-go="uv"><span class="tick" id="t-uv">1</span>Install uv</button>
+      <button data-go="api"><span class="tick" id="t-api">2</span>Get your API keys</button>
+      <button data-go="login"><span class="tick" id="t-login">3</span>Log in to Telegram</button>
+      <button data-go="config"><span class="tick" id="t-config">4</span>Make it yours</button>
+      <button data-go="claude" class="opt"><span class="tick" id="t-claude">5</span>Inbox Manager <small>(optional)</small></button>
+      <button data-go="done"><span class="tick" id="t-done">✓</span>Open AhaSlack</button>
+    </div>
+    <div class="foot">Your login stays on this Mac. AhaSlack talks to Telegram directly, with no server in between.</div>
+  </aside>
+
+  <main>
+    <!-- 1 -->
+    <section class="step" id="s-uv">
+      <div class="kicker">Step 1 of 4</div>
+      <h2>Install uv</h2>
+      <p class="lead">AhaSlack's engine is a small Python program. <b>uv</b> runs it and fetches what it needs, so you don't have to set up Python yourself.</p>
+      <ol class="how">
+        <li>Click <b>Install in Terminal</b>. Terminal opens and runs the official installer from astral.sh:
+          <div class="cmd"><span>curl -LsSf https://astral.sh/uv/install.sh | sh</span></div></li>
+        <li>Wait for it to say <code>everything's installed!</code>. It takes a few seconds.</li>
+        <li>Come back here. This step ticks itself off.</li>
+      </ol>
+      <div class="status wait" data-status="uv"></div>
+      <div class="row"><button class="btn primary" data-act="install-uv">Install in Terminal</button><button class="btn" data-go="api">Next →</button></div>
+    </section>
+
+    <!-- 2 -->
+    <section class="step" id="s-api">
+      <div class="kicker">Step 2 of 4</div>
+      <h2>Get your Telegram API keys</h2>
+      <p class="lead">Telegram gives every app that reads your own account a pair of keys: an <b>api_id</b> (a number) and an <b>api_hash</b> (a long code). You create them once, for free.</p>
+      <ol class="how">
+        <li>Open <b>my.telegram.org</b> (button below) and enter your phone number in international format, for example <code>+84 912 345 678</code>.</li>
+        <li>Telegram sends a <b>confirmation code to your Telegram app</b> (not by SMS). Type it in on the website.</li>
+        <li>Click <b>API development tools</b>.</li>
+        <li>Fill in the <b>Create new application</b> form. Only the first two fields matter:
+          <div class="form">
+            <div class="f"><span>App title</span><b>AhaSlack</b></div>
+            <div class="f"><span>Short name</span><b>ahaslack</b></div>
+            <div class="f"><span>URL</span><i>leave empty</i></div>
+            <div class="f"><span>Platform</span><b>Desktop</b></div>
+            <div class="f"><span>Description</span><i>leave empty</i></div>
+          </div>
+          Then click <b>Create application</b>.</li>
+        <li>The page now shows <b>App api_id</b> and <b>App api_hash</b>. Keep that tab open: you'll paste both in the next step.</li>
+      </ol>
+      <div class="note">If the form shows "ERROR", try again with a different short name, or turn off a VPN or ad blocker for that page. It's a known quirk of the site.</div>
+      <div class="note safe"><b>Keep the api_hash private.</b> Together with a login, it gives access to your account. AhaSlack stores it only on this Mac, in <code>~/.config/telegram-inbox/</code>, readable only by you.</div>
+      <div class="row"><button class="btn primary" data-act="open-mytg">Open my.telegram.org</button><button class="btn" data-go="login">I have my api_id and api_hash →</button></div>
+    </section>
+
+    <!-- 3 -->
+    <section class="step" id="s-login">
+      <div class="kicker">Step 3 of 4</div>
+      <h2>Log in to Telegram</h2>
+      <p class="lead">You log in once, in Terminal, so your code and password never pass through the app's window. AhaSlack then appears on Telegram as a new device (Settings → Devices), and you can log it out from there at any time.</p>
+      <ol class="how">
+        <li>Click <b>Log in with Terminal</b>.</li>
+        <li>Answer the questions:
+          <div class="term">
+            <div><span class="p">api_id:</span> <span class="y">12345678</span>   <span style="color:#868686"># the number from step 2</span></div>
+            <div><span class="p">api_hash (hidden):</span>        <span style="color:#868686"># paste it; nothing shows as you type</span></div>
+            <div><span class="p">Please enter your phone (or bot token):</span> <span class="y">+84912345678</span></div>
+            <div><span class="p">Please enter the code you received:</span> <span class="y">12345</span>   <span style="color:#868686"># sent to your Telegram app</span></div>
+            <div><span class="p">Please enter your password:</span>        <span style="color:#868686"># only if you use two-step verification</span></div>
+            <div class="g">Logged in as Your Name (@yourhandle).</div>
+          </div></li>
+        <li>When Terminal says <b>Logged in as …</b>, come back here. This step ticks itself off.</li>
+      </ol>
+      <div class="note">Telegram also posts a "new login" message in your Telegram app. That's expected: it's AhaSlack.</div>
+      <div class="status wait" data-status="login"></div>
+      <div class="row"><button class="btn primary" data-act="login">Log in with Terminal</button><button class="btn" data-go="config">Next →</button></div>
+    </section>
+
+    <!-- 4 -->
+    <section class="step" id="s-config">
+      <div class="kicker">Step 4 of 4</div>
+      <h2>Make it yours</h2>
+      <p class="lead">Logging in created a settings file, <code>config.toml</code>. A few lines in it make AhaSlack much smarter about what needs you.</p>
+      <ol class="how">
+        <li><code>my_keywords = ["Your Name", "yourhandle"]</code>: the names people use for you. A group that says one of them goes to <b>Needs you</b>. (@mentions and replies to you are found automatically.)</li>
+        <li><code>timezone = "Asia/Ho_Chi_Minh"</code>: your timezone, for message times.</li>
+        <li><code>sending_enabled = true</code>: lets you send, reply, react and edit from AhaSlack. It's off until you turn it on.</li>
+        <li><code>mark_read_enabled = true</code>: lets AhaSlack mark chats read on Telegram, like Slack does when you open a channel.</li>
+        <li>Optional: <code>vip_users</code> (people whose messages always matter) and <code>ignore_chats</code> (groups to treat as noise).</li>
+      </ol>
+      <p>Save the file. AhaSlack reads it every time it starts.</p>
+      <div class="row"><button class="btn primary" data-act="open-config">Open config.toml</button><button class="btn" data-go="claude">Next →</button></div>
+    </section>
+
+    <!-- 5 -->
+    <section class="step" id="s-claude">
+      <div class="kicker">Optional</div>
+      <h2>Turn on the Inbox Manager</h2>
+      <p class="lead">The Inbox Manager answers questions like <i>"What needs me today?"</i>. It runs on Claude through <b>Claude Code</b> and uses your Claude Code login, so you don't need an API key. Everything else in AhaSlack works without it.</p>
+      <ol class="how">
+        <li>Install Claude Code from <b>claude.com/claude-code</b> (button below).</li>
+        <li>Run <code>claude</code> once in Terminal and log in.</li>
+      </ol>
+      <div class="note safe">The Inbox Manager can only read. It has no way to send, edit or mark anything on Telegram, and what you ask it goes to Claude.</div>
+      <div class="status wait" data-status="claude"></div>
+      <div class="row"><button class="btn" data-act="open-claude">Get Claude Code</button><button class="btn" data-go="done">Next →</button></div>
+    </section>
+
+    <!-- done -->
+    <section class="step" id="s-done">
+      <div class="kicker">All set</div>
+      <h2>Open AhaSlack</h2>
+      <p class="lead" id="done-lead">Steps 1 to 3 are needed. When they're ticked, open AhaSlack.</p>
+      <p>The first start takes a minute: it downloads AhaSlack's Python packages and reads your chats. After that, it opens in seconds and stays in sync live.</p>
+      <div class="row"><button class="btn primary" data-act="continue" id="go">Open AhaSlack</button></div>
+      <p class="lead" style="font-size:14px">Stuck? <a href="#" data-act="open-log">Open the server log</a> or see the setup guide in the <a href="#" data-act="open-readme">README</a>.</p>
+    </section>
+  </main>
+</div>
+
+<script>
+  const $ = (s) => document.querySelector(s);
+  const order = ["uv", "api", "login", "config", "claude", "done"];
+  let status = {};
+  function go(id) {
+    document.querySelectorAll(".step").forEach((s) => s.classList.toggle("on", s.id === "s-" + id));
+    document.querySelectorAll(".nav button").forEach((b) => b.classList.toggle("on", b.dataset.go === id));
+    document.querySelector("main").scrollTop = 0;
+  }
+  function render() {
+    const done = { uv: status.uv, api: status.creds, login: status.session, config: status.session && status.config, claude: status.claude, done: status.uv && status.session };
+    for (const k of order) document.querySelector(`.nav [data-go="${k}"]`).classList.toggle("done", !!done[k]);
+    const msg = {
+      uv: status.uv ? ["ok", "✓ uv is installed"] : ["wait", "Waiting for uv… (this ticks itself off once it's installed)"],
+      login: status.session ? ["ok", `✓ Logged in${status.creds ? "" : ""}. Your Telegram is connected.`] : ["wait", "Waiting for you to log in in Terminal…"],
+      claude: status.claude ? ["ok", "✓ Claude Code is installed"] : ["wait", "Claude Code isn't installed (optional)"],
+    };
+    document.querySelectorAll("[data-status]").forEach((el) => { const [cls, text] = msg[el.dataset.status]; el.className = "status " + cls; el.textContent = text; });
+    $("#go").disabled = !done.done;
+    $("#done-lead").textContent = done.done ? "You're connected. Open AhaSlack to see your Telegram." : `Still to do: ${[!status.uv && "install uv (step 1)", !status.session && "log in (step 3)"].filter(Boolean).join(" and ")}.`;
+  }
+  async function poll() { status = await window.setup.status(); render(); }
+  document.addEventListener("click", async (e) => {
+    const g = e.target.closest("[data-go]");
+    if (g) return go(g.dataset.go);
+    const a = e.target.closest("[data-act]");
+    if (!a) return;
+    e.preventDefault();
+    const label = a.textContent;
+    if (a.dataset.act === "continue") { a.disabled = true; a.textContent = "Starting AhaSlack… (the first start takes a minute)"; }
+    try { await window.setup.act(a.dataset.act); } finally { if (a.dataset.act === "continue") { a.disabled = false; a.textContent = label; } }
+    poll();
+  });
+  (async () => {
+    await poll();
+    go(!status.uv ? "uv" : !status.creds ? "api" : !status.session ? "login" : "done");
+    setInterval(poll, 2000);
+  })();
+</script>
+</body>
+</html>
