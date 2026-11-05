@@ -46,6 +46,9 @@ CREATE TABLE IF NOT EXISTS threads (
 );
 CREATE INDEX IF NOT EXISTS threads_last ON threads(last_ts DESC);
 -- Which thread a message belongs to (to follow reply-to-a-reply chains).
+-- Where you go and what you write (for Slack-style "frecency" ranking in search and ⌘K).
+CREATE TABLE IF NOT EXISTS visits (chat_id INTEGER NOT NULL, ts REAL NOT NULL, kind TEXT NOT NULL, q TEXT);
+CREATE INDEX IF NOT EXISTS visits_chat ON visits(chat_id, ts DESC);
 CREATE TABLE IF NOT EXISTS thread_msgs (chat_id INTEGER, msg_id INTEGER, root_id INTEGER, PRIMARY KEY(chat_id, msg_id));
 """
 DROP = ("done", "flags")  # per-request fields that shouldn't be stored
@@ -229,6 +232,43 @@ class MentionDB:
             d["last"] = json.loads(d["last"]) if d["last"] else None
             out.append(d)
         return out, len(rows) > limit
+
+    # ------------------------------------------------------------- frecency (Slack's quick switcher)
+    VISIT_WEIGHT = {"send": 2.0, "switch": 1.5, "open": 1.0}
+
+    def add_visit(self, chat_id: int, kind: str, q: str | None = None) -> None:
+        now = time.time()
+        with self.conn:
+            if kind == "open":  # reopening the same chat within a minute isn't another visit
+                last = self.conn.execute("SELECT ts FROM visits WHERE chat_id = ? AND kind = 'open' ORDER BY ts DESC LIMIT 1", (chat_id,)).fetchone()
+                if last and now - last["ts"] < 60:
+                    return
+            self.conn.execute("INSERT INTO visits VALUES(?, ?, ?, ?)", (chat_id, now, kind, (q or "")[:40] or None))
+            self.conn.execute("DELETE FROM visits WHERE ts < ?", (now - 180 * 86400,))  # keep half a year
+
+    def frecency(self, now: float | None = None) -> dict[int, float]:
+        """Firefox/Slack-style frecency: the average weight of your last 10 visits (recent ones count
+        more) times how many times you've been there."""
+        now = now or time.time()
+        def bucket(age_days: float) -> int:
+            return 100 if age_days <= 4 else 70 if age_days <= 14 else 50 if age_days <= 31 else 30 if age_days <= 90 else 10
+        out: dict[int, float] = {}
+        rows = self.conn.execute("SELECT chat_id, ts, kind FROM visits ORDER BY chat_id, ts DESC").fetchall()
+        by_chat: dict[int, list] = {}
+        for r in rows:
+            by_chat.setdefault(r["chat_id"], []).append(r)
+        for chat_id, vs in by_chat.items():
+            sample = vs[:10]
+            pts = sum(bucket((now - v["ts"]) / 86400) * self.VISIT_WEIGHT.get(v["kind"], 1.0) for v in sample) / len(sample)
+            out[chat_id] = pts * len(vs)
+        return out
+
+    def picks(self, limit: int = 300) -> list[list]:
+        """What you typed in ⌘K before choosing a chat: [query, chat_id, times] (Slack learns these)."""
+        rows = self.conn.execute(
+            "SELECT lower(q) AS q, chat_id, COUNT(*) AS n FROM visits WHERE kind = 'switch' AND q IS NOT NULL "
+            "GROUP BY lower(q), chat_id ORDER BY n DESC LIMIT ?", (limit,)).fetchall()
+        return [[r["q"], r["chat_id"], r["n"]] for r in rows]
 
 
 def _j(v) -> str | None:

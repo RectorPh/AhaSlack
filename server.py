@@ -83,6 +83,7 @@ class Inbox:
         self.status = "ready"
         self.live = Live(self)
         self.live.attach()  # real-time: Telegram pushes new messages, edits, deletes and reads
+        asyncio.create_task(self.load_top_peers())
         asyncio.create_task(self.load_all_topics())
         asyncio.create_task(self.refresh_mentions(7 if self.db.get_meta("backfilled") else 30))
         if not latest.exists() or time.time() - latest.stat().st_mtime > 6 * 3600:  # live sync covers the rest
@@ -137,6 +138,32 @@ class Inbox:
         for r in got:
             if r is not None:
                 self.db.thread_set_root(chat.id, r.id, tg.to_dict(r, chat.entity, tz, 1500))
+
+    # ------------------------------------------------------------- affinity: who and where you go most
+    top: dict[int, float] = {}
+    top_at: float = 0.0
+
+    async def load_top_peers(self) -> None:
+        try:
+            self.top, self.top_at = await tg.top_peers(self.client), time.time()
+        except Exception as exc:  # noqa: BLE001 - ranking just uses your own visits then
+            print(f"top peers: {exc}", file=sys.stderr)
+
+    def affinity(self) -> dict[str, int]:
+        """0..100 per chat: how much you use it. Your visits and messages in AhaSlack (frecency),
+        with Telegram's "most used" list as a head start, like Slack's quick switcher."""
+        if time.time() - self.top_at > 6 * 3600:
+            asyncio.create_task(self.load_top_peers())
+            self.top_at = time.time()  # don't pile up refreshes
+        import math
+        fr = self.db.frecency()
+        out = {}
+        for cid in set(fr) | set(self.top):
+            app = 1 - math.exp(-fr.get(cid, 0) / 400)
+            a = round(100 * min(1.0, 0.65 * app + 0.55 * self.top.get(cid, 0)))
+            if a > 0:
+                out[str(cid)] = a
+        return out
 
     def save_state(self) -> None:
         STATE_FILE.write_text(json.dumps({"done": sorted(self.done), "shortcuts": self.shortcuts,
@@ -267,6 +294,8 @@ async def state():
         "totals": rep.get("totals"),
         "mentions_unread": inbox.db.unread_count(inbox.ignored),
         "threads_unread": inbox.db.thread_unread_count(inbox.ignored),
+        "affinity": inbox.affinity(),
+        "picks": inbox.db.picks(),
         "chats": (chats := sidebar(rep)),
         "topics": {str(c["id"]): [{k: t[k] for k in ("id", "title", "unread_count", "unread_mentions", "last_ts", "closed", "pinned", "hidden")}
                                   for t in inbox.topics.get(c["id"], [])] for c in chats if c.get("forum")},
@@ -498,6 +527,7 @@ async def message_action(chat_id: int, msg_id: int, op: str, request: Request):
     elif op == "forward":
         dst = _chat_or_404(int(body.get("to")))
         await _telegram(tg.forward_to(inbox.client, c, msg_id, dst), "forward it")
+        inbox.db.add_visit(dst.id, "send")
         return {"ok": True, "to": dst.name}
     elif op == "pin":
         await _telegram(tg.set_pinned(inbox.client, c, msg_id, bool(body.get("pinned", True))), "pin it")
@@ -535,6 +565,7 @@ async def upload(chat_id: int, request: Request):
         reply_to = topic  # posting into a topic
     msg = await _telegram(tg.send_upload(inbox.client, inbox.cfg, c, data, name, caption, reply_to), "send the file")
     print(f"uploaded {name} ({len(data)} bytes) to {c.name}", file=sys.stderr)
+    inbox.db.add_visit(c.id, "send")
     root = int(request.headers.get("x-thread-root") or 0) or None
     if reply_to and reply_to != topic:
         inbox.track_thread(c, msg | {"ts": time.time()}, root=root)
@@ -656,6 +687,15 @@ async def msg_reactions(chat_id: int, msg_id: int):
         raise HTTPException(403, str(exc))
 
 
+@app.post("/api/visit")
+async def visit(request: Request):
+    """You opened a chat (or picked it in ⌘K after typing q): feeds search ranking."""
+    body = await request.json()
+    kind = body.get("kind") if body.get("kind") in ("open", "switch") else "open"
+    inbox.db.add_visit(int(body["chat_id"]), kind, (body.get("q") or "").strip().lower() or None)
+    return {"ok": True}
+
+
 @app.get("/api/chat/{chat_id}/topics")
 async def chat_topics(chat_id: int):
     """A forum group's topics, fresh from Telegram."""
@@ -713,6 +753,7 @@ async def send_sticker(chat_id: int, request: Request):
         raise HTTPException(404, str(exc))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f"Telegram refused the sticker: {exc}")
+    inbox.db.add_visit(c.id, "send")
     return {"message": msg}
 
 
@@ -794,6 +835,7 @@ async def send(chat_id: int, request: Request):
     except Exception as exc:  # noqa: BLE001 - e.g. no permission to post in a channel
         raise HTTPException(400, f"Telegram refused: {exc}")
     print(f"sent message {msg['id']} to {c.name}", file=sys.stderr)
+    inbox.db.add_visit(c.id, "send")
     root = body.get("thread_root")
     if reply_to and (not c.forum or int(reply_to) != int(topic or 0)):  # a reply joins its thread
         inbox.track_thread(c, msg | {"ts": time.time()}, root=int(root) if root else None)

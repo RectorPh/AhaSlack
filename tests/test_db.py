@@ -66,3 +66,26 @@ def test_thread_read_unread_and_read_all(tmp_path):
     assert d.thread_mark_unread(1, 10) and d.thread_unread_count() == 3
     assert d.thread_read_all(exclude_chats={3}) == 2   # ignored chats are left alone
     assert d.thread_unread_count() == 1 and d.thread_unread_count({3}) == 0
+
+
+def test_frecency_prefers_recent_and_frequent(tmp_path, monkeypatch):
+    d = MentionDB(tmp_path / "t.db")
+    clock = [1_000_000.0]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+    for _ in range(5):                 # chat 1: five sends today
+        d.add_visit(1, "send"); clock[0] += 120
+    d.add_visit(2, "open")             # chat 2: one look today
+    d.add_visit(2, "open")             # ...again within a minute: not counted twice
+    clock[0] += 40 * 86400
+    d.add_visit(3, "open")             # chat 3: today; chats 1 and 2 are now 40 days old
+    f = d.frecency()
+    assert f[1] > f[3] > f[2]          # many old sends > one fresh look > one old look
+    assert len([r for r in d.conn.execute("SELECT * FROM visits WHERE chat_id = 2")]) == 1
+
+
+def test_picks_remember_what_you_typed(tmp_path):
+    d = MentionDB(tmp_path / "t.db")
+    d.add_visit(7, "switch", "Lin")
+    d.add_visit(7, "switch", "lin")
+    d.add_visit(8, "switch", "lin")
+    assert d.picks()[0] == ["lin", 7, 2]

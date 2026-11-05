@@ -178,12 +178,46 @@ function score(name, q) {
   for (const ch of n) if (ch === q[i]) i++;
   return i === q.length ? 20 : 0;
 }
+// ---------------------------------------------------------------- ranking like Slack's quick switcher
+// First: does the name match what you typed (score). Then: how much you use it (affinity, 0..100,
+// from your visits and messages in AhaSlack plus Telegram's own "most used" list), and whether you
+// picked it before after typing the same thing (learned picks). A chat you use all the time beats a
+// slightly better name match you never open.
+const affinity = (id) => state?.affinity?.[String(id)] || 0;
+function learnedBoost(q, id) {
+  const fq = fold(q).trim();
+  if (!fq) return 0;
+  let n = 0;
+  for (const [pq, cid, times] of state?.picks || []) {
+    if (cid !== id) continue;
+    const fp = fold(pq);
+    if (fp.startsWith(fq) || fq.startsWith(fp)) n += times;
+  }
+  return n ? 35 + 5 * Math.min(n, 5) : 0;
+}
+function rankChat(c, q) {
+  // the name, or the @username if that matches better (not both added up)
+  const m = Math.max(score(c.name, q), c.username && fold(c.username).startsWith(fold(q).replace(/^@/, "")) ? 90 : 0);
+  if (m <= 0) return 0;
+  return m + 0.6 * affinity(c.id) + learnedBoost(q, c.id);
+}
 function matchChats(q, filter = () => true, limit = 50) {
   return allChats.filter(filter)
-    .map((c) => ({ c, s: score(c.name, q) + (c.username && fold(c.username).startsWith(fold(q)) ? 30 : 0) }))
+    .map((c) => ({ c, s: rankChat(c, q) }))
     .filter((x) => x.s > 0)
     .sort((a, b) => b.s - a.s || (b.c.unread_count > 0) - (a.c.unread_count > 0) || b.c.last_ts - a.c.last_ts)
     .slice(0, limit).map((x) => x.c);
+}
+// With nothing typed: where you go most, then what you opened last.
+function frequentChats(filter = () => true, limit = 12) {
+  const recent = (store("recentChats") || []).slice(0, 4).map(chatById).filter((c) => c && filter(c));
+  const top = allChats.filter((c) => filter(c) && affinity(c.id) > 0 && !recent.includes(c))
+    .sort((a, b) => affinity(b.id) - affinity(a.id) || b.last_ts - a.last_ts);
+  const rest = recentChats().filter((c) => filter(c) && !recent.includes(c) && !top.includes(c));
+  return [...recent, ...top, ...rest].slice(0, limit);
+}
+function recordVisit(chatId, kind = "open", q = "") {
+  postJson("/api/visit", { chat_id: chatId, kind, q }).catch(() => {});
 }
 
 // ================================================================== state + sidebar
@@ -935,6 +969,7 @@ async function openChat(id, { focus, topic } = {}) {
   const t = currentTopic ? topicById(id, currentTopic) : null;
   setView("chat");
   remember(id);
+  recordVisit(id, "open");
   const icon = c.kind === "dm" || c.kind === "bot" ? chatAv(c, "s24") : `<span class="hash">${chatGlyph(c)}</span>`;
   header(currentTopic
       ? `<span class="hash">#</span><h1>${esc(t?.title || "Topic")}</h1><span class="topic" id="ch-topic"></span>`
@@ -1399,7 +1434,7 @@ function renderPop() {
     html += `<div class="pop-head">Messages</div><div class="pop-item" data-i="0"><span class="ico">⌕</span><span class="nm">Search messages for “<b>${esc(q)}</b>”${searchScope ? ` in ${esc(chatById(searchScope)?.name || "")}` : ""}</span><span class="sub">↵</span></div>`;
   }
   if (!searchScope) {
-    const chats = q ? matchChats(q, () => true, 8) : recentChats().slice(0, 6);
+    const chats = q ? matchChats(q, () => true, 8) : frequentChats(() => true, 6);
     if (chats.length) {
       html += `<div class="pop-head">${q ? "Channels & people" : "Recent"}</div>`;
       for (const c of chats) {
@@ -1548,34 +1583,34 @@ function renderSwitcher() {
     { type: "view", view: "threads", name: "Threads", icon: "🧵", sub: state?.threads_unread ? `${state.threads_unread} new` : "" },
     { type: "view", view: "mentions", name: "Mentions & replies", icon: "@", sub: state?.mentions_unread ? `${state.mentions_unread} unread` : "" },
     { type: "view", view: "unreads", name: "All unreads", icon: "≡" },
-  ].filter((s) => !q || score(s.name, q) > 0) : [];
+  ].filter((s) => !q || score(s.name, q) >= 40) : [];
   let convos;
   if (q) {  // chats and topics ranked together, so a topic isn't buried under weak chat matches
-    const chatHits = allChats.filter(filter).map((c) => ({ type: "chat", chat: c,
-      s: score(c.name, q) + (c.username && fold(c.username).startsWith(fold(q)) ? 30 : 0) })).filter((x) => x.s > 0);
+    const chatHits = allChats.filter(filter).map((c) => ({ type: "chat", chat: c, s: rankChat(c, q) })).filter((x) => x.s > 0);
     const topicHits = all ? Object.entries(state?.topics || {}).flatMap(([cid, ts]) => {
       const c = chatById(Number(cid));
       return c ? ts.map((t) => {
         const own = score(t.title, q), both = score(`${t.title} ${c.name}`, q);
-        return { type: "topic", chat: c, topic: t, s: own > 0 ? own + 1 : both >= 40 ? both - 5 : 0 };
+        const m = own > 0 ? own + 1 : both >= 40 ? both - 5 : 0;
+        return { type: "topic", chat: c, topic: t, s: m ? m + 0.4 * affinity(c.id) : 0 };
       }).filter((x) => x.s > 0) : [];
     }) : [];
-    const cmdHits = all ? switcherCommands().map((c) => ({ ...c, type: "cmd", s: Math.max(score(c.name, q), c.keywords ? score(c.keywords, q) - 10 : 0) }))
-      .filter((c) => c.s >= 40).sort((x, y) => y.s - x.s).slice(0, 10) : [];
-    const strong = [...chatHits, ...topicHits].filter((x) => x.s >= 40);
+    const cmdHits = all ? switcherCommands().map((c) => ({ ...c, type: "cmd", s: Math.max(score(c.name, q), c.keywords ? score(c.keywords, q) - 10 : 0) - 10 }))  // conversations first on a tie
+      .filter((c) => c.s >= 30).sort((x, y) => y.s - x.s).slice(0, 10) : [];
+    const strong = [...chatHits, ...topicHits].filter((x) => x.s - 0.6 * affinity(x.chat.id) >= 40);
     // loose letter-by-letter matches only when there's little else
-    convos = [...chatHits, ...topicHits, ...cmdHits].filter((x) => x.s >= 40 || strong.length + cmdHits.length < 8)
+    convos = [...chatHits, ...topicHits, ...cmdHits].filter((x) => (x.chat ? x.s - 0.6 * affinity(x.chat.id) : x.s) >= 40 || strong.length + cmdHits.length < 8)
       .sort((x, y) => y.s - x.s || ((y.chat?.unread_count > 0) - (x.chat?.unread_count > 0)) || (y.topic?.last_ts || y.chat?.last_ts || 0) - (x.topic?.last_ts || x.chat?.last_ts || 0))
       .slice(0, 40);
   } else {
-    const recent = recentChats().filter(filter).slice(0, 12);
-    convos = (recent.length ? recent : allChats.filter(filter).slice(0, 12)).map((c) => ({ type: "chat", chat: c }));
+    const frequent = frequentChats(filter, 12);
+    convos = (frequent.length ? frequent : allChats.filter(filter).slice(0, 12)).map((c) => ({ type: "chat", chat: c }));
   }
   swItems = [...views, ...convos];
   swSel = Math.min(swSel, Math.max(swItems.length - 1, 0));
   const list = $("#switcher-list");
   if (!swItems.length) { list.innerHTML = `<div class="empty" style="padding:24px">Nothing matches “${esc(q)}”.</div>`; return; }
-  list.innerHTML = (q ? "" : `<div class="pop-head">Recent</div>`) + swItems.map((it, i) => {
+  list.innerHTML = (q ? "" : `<div class="pop-head">Frequent & recent</div>`) + swItems.map((it, i) => {
     if (it.type === "view") return `<div class="pop-item" data-i="${i}"><span class="ico">${it.icon}</span><span class="nm">${esc(it.name)}</span><span class="sub">${esc(it.sub || "")}</span></div>`;
     if (it.type === "cmd") return `<div class="pop-item" data-i="${i}"><span class="ico">${it.icon || "⚙"}</span><span class="nm">${esc(it.name)}${it.on ? ` <span class="sub">✓ current</span>` : ""}</span><span class="sub">${esc(it.key || "setting")}</span></div>`;
     if (it.type === "topic") return `<div class="pop-item" data-i="${i}"><span class="ico">#</span><span class="nm">${esc(it.topic.title)} <span class="sub">· topic in ${esc(it.chat.name)}</span></span>
@@ -1633,6 +1668,7 @@ function chooseSwitcher(i) {
   closeSwitcher();
   if (swMode === "forward") return it.type === "chat" && finishForward(it.chat);
   if (it.type === "cmd") return it.run();
+  if (it.type === "chat" || it.type === "topic") recordVisit(it.chat.id, "switch", $("#switcher-input").value);
   navigate(it.type === "view" ? { view: it.view } : { view: "chat", chatId: it.chat.id, topic: it.type === "topic" ? it.topic.id : undefined });
   if (swMode === "compose" && it.type === "chat") {  // ⌘N: land in the message box, ready to type
     composeMode = state.sending_enabled ? "send" : "ask";

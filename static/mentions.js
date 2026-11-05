@@ -41,6 +41,8 @@ async function loadAtPop(input, chatId, hit) {
   const still = atQuery(input);
   if (!still || still.start !== hit.start) return;
   if (!members.length) return closeAtPop();
+  // keep Telegram's order (recent speakers first), but lift the people you talk to most
+  members = members.map((u, i) => ({ u, s: affinity(u.id) - i * 4 })).sort((a, b) => b.s - a.s).map((x) => x.u);
   atPop = { input, chatId, start: hit.start, items: members, sel: 0 };
   renderAtPop();
 }

@@ -858,6 +858,26 @@ async def reactors(client, chat: Chat, msg_id: int) -> list[dict]:
     return out
 
 
+async def top_peers(client) -> dict[int, float]:
+    """Telegram's own ranking of the people and groups you use most (contacts.getTopPeers), as 0..1
+    per peer. Empty if you turned off "suggest frequent contacts" in Telegram."""
+    from telethon.tl.functions.contacts import GetTopPeersRequest
+    res = await client(GetTopPeersRequest(correspondents=True, groups=True, channels=True, phone_calls=True,
+                                          forward_users=True, forward_chats=True, offset=0, limit=100, hash=0))
+    if not isinstance(res, types.contacts.TopPeers):
+        return {}
+    weight = {types.TopPeerCategoryCorrespondents: 1.0, types.TopPeerCategoryGroups: 1.0, types.TopPeerCategoryPhoneCalls: 0.8,
+              types.TopPeerCategoryChannels: 0.6, types.TopPeerCategoryForwardUsers: 0.5, types.TopPeerCategoryForwardChats: 0.5}
+    out: dict[int, float] = {}
+    for cat in res.categories:
+        w = weight.get(type(cat.category), 0.4)
+        peers = sorted(cat.peers, key=lambda p: -p.rating)
+        for rank, tp in enumerate(peers):
+            pid = utils.get_peer_id(tp.peer)
+            out[pid] = max(out.get(pid, 0.0), w * (1 - rank / max(len(peers), 1)))  # by rank: ratings aren't comparable
+    return out
+
+
 async def remind(client, cfg: triage.Config, chat: Chat, msg_id: int, minutes: int) -> datetime:
     """Slack's reminder (M): a scheduled message to your Saved Messages, Telegram's own reminders."""
     m = await client.get_messages(chat.entity, ids=msg_id)

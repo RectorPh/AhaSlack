@@ -105,6 +105,10 @@ Claude Code login. **It can only read**: it has no tool that sends, edits or mar
   desktop notifications for DMs and mentions and an unread count on the Dock icon.
 - **Reading like Slack:** start where you left off, a *New* divider, an unread banner,
   **⌥⌘U** to jump to the first unread, **Esc** to mark a chat read, **⇧Esc** for everything.
+- **Search that knows who you talk to:** like Slack's quick switcher, ⌘K and search rank
+  matches by *frecency* (how often and how recently you open, write in and call each chat),
+  starting from Telegram's own "most used" list, and learn what you pick after typing
+  something ("k" → the Khanh you always mean).
 - **Search** messages, channels and people (**⌘G**; **⌘F** in this chat). **⌘K** jumps
   anywhere: chats, Telegram topics, Threads and the other views, and settings and commands
   ("dark", "jade", "mute", "calm", "upload"…), so you rarely need to open Preferences.
