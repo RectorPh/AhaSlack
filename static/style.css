@@ -682,3 +682,9 @@ body.resizing-pane iframe, body.resizing-pane .msg { pointer-events: none; }
 
 /* an important DM shown in Needs you */
 .sb-item .dm-tag { font-size: 9.5px; font-weight: 800; letter-spacing: .04em; color: var(--side-dim); border: 1px solid var(--side-dim); border-radius: 3px; padding: 0 3px; margin-left: 4px; flex: none; opacity: .8; }
+
+/* topics pinned to Needs you */
+.pinned-topic .nm { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.pinned-topic .sub-in { font-size: 12px; color: var(--side-dim); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill.soft { background: var(--overlay); color: var(--side-strong); font-weight: 600; }
+#topic-pin.on { border-color: var(--side-active); }

@@ -318,10 +318,12 @@ function renderSidebar() {
   }
   for (const k in groups) sortChats(groups[k]);
   const filterNote = (uiPrefs.show || "all") !== "all" ? `<div class="sb-filter">Showing ${esc(SHOWS[uiPrefs.show].toLowerCase())} · <a href="#" data-show-all>show all</a></div>` : "";
+  const pinned = pinnedTopics();
   $("#sections").innerHTML = `<div class="sb-tools"><button class="sb-tool" data-sidebar-menu title="Sort and filter the sidebar">⇅ ${esc(SORTS[uiPrefs.sort || "priority"])}</button></div>` + filterNote +
     [["starred", "⭐ Starred"], ...SECTIONS].map(([key, label]) => {
     const list = groups[key];
-    if (!list.length) return "";
+    const pins = key === "must" ? pinned : [];
+    if (!list.length && !pins.length) return "";
     const limit = shown[key] ?? 12;
     const items = list.slice(0, limit).map((c) => {
       if (c.forum && topicsOf(c.id).length) return forumBlock(c);
@@ -336,7 +338,7 @@ function renderSidebar() {
     const more = list.length > limit ? `<button class="more" data-more="${key}">Show ${list.length - limit} more</button>` : "";
     return `<div class="section ${collapsed[key] ? "collapsed" : ""}">
       <button class="section-head" data-toggle="${key}"><span class="caret">▼</span>${label}</button>
-      <div class="section-body">${items}${more}</div></div>`;
+      <div class="section-body">${pins.map(needsTopicRow).join("")}${items}${more}</div></div>`;
   }).join("");
   $$(".sb-top .sb-item").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
 }
@@ -395,6 +397,43 @@ $("#ctx-menu").addEventListener("click", (e) => {
   saveUi();
   renderSidebar();
 }, true);
+// Topics you pin to Needs you (uiPrefs.needsTopics: ["chatId:topicId", ...]).
+const topicKey = (chatId, topicId) => `${chatId}:${topicId}`;
+const inNeedsYou = (chatId, topicId) => (uiPrefs.needsTopics || []).includes(topicKey(chatId, topicId));
+function toggleNeedsTopic(chatId, topicId) {
+  const list = new Set(uiPrefs.needsTopics || []);
+  const k = topicKey(chatId, topicId), on = !list.has(k);
+  if (on) list.add(k); else list.delete(k);
+  uiPrefs.needsTopics = [...list];
+  saveUi();
+  renderSidebar();
+  const t = topicById(chatId, topicId);
+  toast(on ? `📌 # ${esc(t?.title || "Topic")} is in Needs you` : `Removed # ${esc(t?.title || "topic")} from Needs you`);
+  if (view === "chat" && currentChat === chatId && currentTopic === topicId) updateTopicPinButton();
+}
+function pinnedTopics() {
+  return (uiPrefs.needsTopics || []).map((k) => {
+    const [cid, tid] = k.split(":").map(Number);
+    const c = chatById(cid), t = topicById(cid, tid);
+    return c && t && showChat(c) ? { c, t } : null;
+  }).filter(Boolean);
+}
+function needsTopicRow({ c, t }) {
+  return `<button class="sb-item topic-row pinned-topic ${t.unread_count ? "unread" : ""} ${view === "chat" && currentChat === c.id && currentTopic === t.id ? "active" : ""}"
+    data-chat="${c.id}" data-topic="${t.id}" title="# ${esc(t.title)} · topic in ${esc(c.name)} · pinned to Needs you"><span class="sb-ico">#</span>
+    <span class="nm">${esc(t.title)} <span class="sub-in">${esc(c.name)}</span></span>
+    ${t.unread_mentions ? `<b class="pill">${t.unread_mentions}</b>` : t.unread_count ? `<b class="pill soft">${t.unread_count > 99 ? "99+" : t.unread_count}</b>` : ""}
+    <span class="more-btn" data-menu="${c.id}" data-menu-topic="${t.id}" title="More options" role="button">⋯</span></button>`;
+}
+// The ☆ in a topic's header: add it to Needs you or take it out.
+function updateTopicPinButton() {
+  const b = $("#topic-pin");
+  if (!b || !currentTopic) return;
+  const on = inNeedsYou(currentChat, currentTopic);
+  b.classList.toggle("on", on);
+  b.innerHTML = `${on ? "📌" : "☆"} <span class="lbl">${on ? "In Needs you" : "Add to Needs you"}</span>`;
+}
+
 function toggleStar(chatId) {
   const list = new Set(uiPrefs.starred || []);
   const on = !list.has(chatId);
@@ -417,7 +456,7 @@ $("#sections").addEventListener("click", (e) => {
   if (menuBtn) {
     e.stopPropagation();
     const r = menuBtn.getBoundingClientRect();
-    return openChatMenu(Number(menuBtn.dataset.menu), r.right + 4, r.top);
+    return openChatMenu(Number(menuBtn.dataset.menu), r.right + 4, r.top, menuBtn.dataset.menuTopic ? Number(menuBtn.dataset.menuTopic) : null);
   }
   const t = e.target.closest("button");
   if (!t) return;
@@ -441,12 +480,18 @@ $("#refresh").addEventListener("click", async () => {
 const chatById = (id) => state?.chats.find((c) => c.id === id) || allChats.find((c) => c.id === id);
 
 // ================================================================== chat menu (⋯ / right-click): ignore, mark read, details
-function openChatMenu(chatId, x, y) {
+function openChatMenu(chatId, x, y, topicId = null) {
   const c = chatById(chatId);
   if (!c) return;
   const menu = $("#ctx-menu");
   const isGroup = c.kind !== "dm";
-  menu.innerHTML = `<div class="mh">${esc(chatLabel(c))}</div>
+  const t = topicId ? topicById(chatId, topicId) : null;
+  const topicItems = t ? `<div class="mh"># ${esc(t.title)}</div>
+    <button class="mi" data-m="topic-open">Open topic</button>
+    <button class="mi" data-m="topic-needs">${inNeedsYou(chatId, topicId) ? "Remove from Needs you" : "📌 Add to Needs you"}</button>
+    <div class="sep"></div>` : "";
+  menu.dataset.topic = topicId || "";
+  menu.innerHTML = topicItems + `<div class="mh">${esc(chatLabel(c))}</div>
     <button class="mi" data-m="open">${c.forum ? "Open all topics together" : "Open conversation"}</button>
     ${c.forum ? `<button class="mi" data-m="forum">${forumExpanded(chatId) ? "Collapse topics" : "Show topics"}</button>` : ""}
     <button class="mi" data-m="details">Conversation details<span class="k">${plainCombo(bindingOf(action("details")))}</span></button>
@@ -468,7 +513,7 @@ $("#sections").addEventListener("contextmenu", (e) => {
   const item = e.target.closest(".sb-item[data-chat]");
   if (!item) return;
   e.preventDefault();
-  openChatMenu(Number(item.dataset.chat), e.clientX, e.clientY);
+  openChatMenu(Number(item.dataset.chat), e.clientX, e.clientY, item.dataset.topic ? Number(item.dataset.topic) : null);
 });
 document.addEventListener("mousedown", (e) => { if (!e.target.closest("#ctx-menu") && !e.target.closest("[data-menu]")) closeMenu(); });
 $("#ctx-menu").addEventListener("click", async (e) => {
@@ -483,6 +528,8 @@ $("#ctx-menu").addEventListener("click", async (e) => {
   else if (m === "details") openDetails(id);
   else if (m === "read") markRead(id);
   else if (m === "star") toggleStar(id);
+  else if (m === "topic-open") navigate({ view: "chat", chatId: id, topic: Number($("#ctx-menu").dataset.topic) });
+  else if (m === "topic-needs") toggleNeedsTopic(id, Number($("#ctx-menu").dataset.topic));
   else if (m === "summarize") { if (view !== "chat" || currentChat !== id) navigate({ view: "chat", chatId: id }); setTimeout(summarizeChat, 50); }
   else if (m === "ignore" || m === "unignore") setIgnored(id, m === "ignore");
   else if (m === "tg") window.open(c.link, "_blank", "noopener");
@@ -683,6 +730,8 @@ $("#ch-actions").addEventListener("click", async (e) => {
     if (busy) return;
     await api("/api/reset", { method: "POST" });
     renderHistory([]);
+  } else if (act === "topic-needs") {
+    if (currentTopic) toggleNeedsTopic(currentChat, currentTopic);
   } else if (act === "threads-read-all") {
     markAllThreadsRead();
   } else if (act === "threads-refresh") {
@@ -989,7 +1038,9 @@ async function openChat(id, { focus, topic } = {}) {
   header(currentTopic
       ? `<span class="hash">#</span><h1>${esc(t?.title || "Topic")}</h1><span class="topic" id="ch-topic"></span>`
       : `${icon}<h1>${esc(c.name)}</h1><span class="topic" id="ch-topic"></span>`,
+    (currentTopic ? `<button class="btn" id="topic-pin" data-act="topic-needs" title="Show this topic in Needs you">☆ <span class="lbl">Add to Needs you</span></button>` : "") +
     `<button class="btn" data-act="summarize-chat">✦ <span class="lbl">Summarize</span></button>`);
+  updateTopicPinButton();
   replyTo = null;
   chatMessages = [];
   updateComposer();
@@ -1664,6 +1715,12 @@ function switcherCommands() {
     }
     add("Sound settings", () => openSoundSettings(), { icon: "🔔", keywords: "sound audio volume notification ding knock" });
   }
+  if (view === "chat" && currentTopic) {
+    const t = topicById(currentChat, currentTopic);
+    add(inNeedsYou(currentChat, currentTopic) ? `Remove # ${t?.title} from Needs you` : `Add # ${t?.title} to Needs you`,
+      () => toggleNeedsTopic(currentChat, currentTopic), { icon: "📌", keywords: "needs you pin topic sidebar" });
+  }
+  for (const { c, t } of pinnedTopics()) add(`Remove # ${t.title} (${c.name}) from Needs you`, () => toggleNeedsTopic(c.id, t.id), { icon: "📌", keywords: "needs you unpin topic" });
   add(`${uiPrefs.calm ? "Leave" : "Enter"} Calm Space`, () => toggleCalm(), { icon: "☾", key: plainCombo("Mod+J"), keywords: "focus zen hide sidebar" });
   add(`Threads: ${uiPrefs.threads === false ? "group replies into threads" : "show replies inline (Telegram style)"}`, () => pref("threads", uiPrefs.threads === false), { icon: "🧵", keywords: "threads replies grouping" });
   add(`Notifications: ${uiPrefs.notify === false ? "turn on" : "turn off"}`, () => pref("notify", uiPrefs.notify === false), { icon: "🔔", keywords: "notify alerts desktop" });
