@@ -239,10 +239,79 @@ def to_dict(m, entity, tz, text_chars: int, mine_reply_ids: set[int] | frozenset
         "link": msg_link(entity, m.id),
         "pinned": bool(getattr(m, "pinned", False)),
         "edited": bool(getattr(m, "edit_date", None)) and not getattr(m, "edit_hide", False),
+        "ments": text_mentions(m),
         "reactions": [{"emoji": getattr(r.reaction, "emoticon", None) or "★", "count": r.count,
                        "mine": r.chosen_order is not None}
                       for r in (getattr(getattr(m, "reactions", None), "results", None) or [])],
     }
+
+
+def text_mentions(m) -> list[list[int]]:
+    """Tags of people by name (no @username): [offset, length, user_id] in UTF-16 units, like JS strings."""
+    return [[e.offset, e.length, e.user_id] for e in (m.entities or [])
+            if isinstance(e, (types.MessageEntityMentionName, types.InputMessageEntityMentionName)) and hasattr(e, "user_id")]
+
+
+def _person(u) -> dict:
+    return {"id": u.id, "peer": u.id, "name": utils.get_display_name(u) or "Deleted account",
+            "username": getattr(u, "username", None), "photo": photo_id(u), "bot": bool(getattr(u, "bot", False))}
+
+
+async def members(client, chat: Chat, q: str = "", limit: int = 12, recent: list | None = None) -> list[dict]:
+    """People you can @-tag in a chat: those who spoke recently first (like Slack), then everyone else
+    who matches. Uses Telegram's member search, so it works in big groups too."""
+    if chat.kind == "dm":
+        return [_person(chat.entity)] if isinstance(chat.entity, types.User) else []
+    me = await client.get_me(input_peer=True)
+    seen, out = {getattr(me, "user_id", None)}, []
+    def add(u):
+        if isinstance(u, types.User) and u.id not in seen and not u.deleted:
+            seen.add(u.id)
+            out.append(_person(u))
+    fq = _fold(q)
+    for u in recent or []:
+        if not fq or fq in _fold(utils.get_display_name(u)) or fq in _fold(u.username or ""):
+            add(u)
+    if len(out) < limit and not (isinstance(chat.entity, types.Channel) and chat.entity.broadcast):
+        try:
+            for u in await client.get_participants(chat.entity, search=q, limit=limit * 2):
+                add(u)
+        except Exception:  # noqa: BLE001 - member list hidden by the admins: recent speakers only
+            pass
+    return out[:limit]
+
+
+def _fold(s: str) -> str:
+    import unicodedata
+    s = unicodedata.normalize("NFD", s or "").replace("đ", "d").replace("Đ", "D")
+    return "".join(c for c in s if unicodedata.category(c) != "Mn").lower()
+
+
+async def recent_speakers(client, chat: Chat, limit: int = 200) -> list:
+    """People who wrote in the chat lately, most recent first."""
+    out, seen = [], set()
+    async for m in client.iter_messages(chat.entity, limit=limit):
+        s = m.sender
+        if isinstance(s, types.User) and s.id not in seen:
+            seen.add(s.id)
+            out.append(s)
+    return out
+
+
+async def ensure_mentionable(client, chat: Chat, text: str) -> None:
+    """[Name](tg://user?id=N) tags need Telegram to know N (its access hash); look the person up in
+    the chat by name if needed, otherwise Telethon would silently send plain text instead of a tag."""
+    import re
+    for name, uid in re.findall(r"\[([^\]]+)\]\(tg://user\?id=(\d+)\)", text):
+        try:
+            await client.get_input_entity(int(uid))
+            continue
+        except Exception:  # noqa: BLE001 - not cached yet
+            pass
+        try:
+            await client.get_participants(chat.entity, search=name[:64], limit=20)
+        except Exception:  # noqa: BLE001 - members hidden: it goes out as plain text
+            pass
 
 
 GENERAL_TOPIC = 1  # a forum group's "General" topic; its messages carry no topic header
@@ -673,6 +742,7 @@ class ComposerMarkdown:
 
 async def send_text(client, cfg: triage.Config, chat: Chat, text: str, reply_to: int | None = None) -> dict:
     """Send one text message as the user. Only called from the web app's composer."""
+    await ensure_mentionable(client, chat, text)
     msg = await client.send_message(chat.entity, text, reply_to=reply_to, parse_mode=ComposerMarkdown)
     return to_dict(msg, chat.entity, ZoneInfo(cfg.timezone), MAX_TEXT)
 
@@ -693,6 +763,7 @@ async def save_to_saved(client, chat: Chat, msg_id: int) -> None:
 # Every one of these is only ever triggered by the user in the web app, never by the agent.
 
 async def edit_text(client, cfg: triage.Config, chat: Chat, msg_id: int, text: str) -> dict:
+    await ensure_mentionable(client, chat, text)
     msg = await client.edit_message(chat.entity, msg_id, text, parse_mode=ComposerMarkdown)
     return to_dict(msg, chat.entity, ZoneInfo(cfg.timezone), MAX_TEXT)
 

@@ -49,7 +49,7 @@ function editMessage(m) {
   input.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } });
   wireComposer($("form", box), input, async (v) => {
     try {
-      const res = await msgPost(currentChat, m.id, "edit", { text: v });
+      const res = await msgPost(currentChat, m.id, "edit", { text: expandMentions(currentChat, v) });
       Object.assign(m, { text: res.message.text, edited: true });
       rerenderChat();
       toast("✓ Message edited");

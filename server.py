@@ -623,6 +623,22 @@ async def chat(chat_id: int, limit: int = 60, around: int | None = None, before:
             "read_upto": t["read_upto"] if t else getattr(c.dialog.dialog, "read_inbox_max_id", 0), **win}
 
 
+_speakers: dict[int, tuple[float, list]] = {}
+
+
+@app.get("/api/chat/{chat_id}/members")
+async def chat_members(chat_id: int, q: str = "", limit: int = 12):
+    """Who you can @-tag here (the composer's mention picker)."""
+    c = inbox.chat_by_id(chat_id)
+    if not c:
+        raise HTTPException(404, "unknown chat")
+    at, recent = _speakers.get(chat_id, (0.0, []))
+    if time.time() - at > 300 and c.kind != "dm":
+        recent = await tg.recent_speakers(inbox.client, c)
+        _speakers[chat_id] = (time.time(), recent)
+    return {"members": await tg.members(inbox.client, c, q.strip().lstrip("@"), min(limit, 30), recent)}
+
+
 @app.get("/api/chat/{chat_id}/topics")
 async def chat_topics(chat_id: int):
     """A forum group's topics, fresh from Telegram."""

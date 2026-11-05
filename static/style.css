@@ -602,3 +602,8 @@ body.electron.calm .ch-head button, body.electron.calm .ch-head a { -webkit-app-
 .custom-colors input[type="color"] { width: 34px; height: 26px; border: 1px solid var(--line); border-radius: 6px; padding: 0 2px; background: none; cursor: pointer; }
 .sound-prefs .pref { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sound-prefs input[type="range"] { width: 120px; }
+
+/* ---------------------------------------------------------------- @-mentions */
+.at-mention { color: var(--link); background: color-mix(in srgb, var(--link) 12%, transparent); border-radius: 3px; padding: 0 2px; font-weight: 600; }
+.at-pop { position: fixed; z-index: 60; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px 0 6px; max-height: 300px; overflow-y: auto; }
+.at-pop .pop-item .nm b { font-weight: 700; }

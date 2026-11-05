@@ -177,7 +177,7 @@ async function sendInThread(text) {
   const target = (tv.target || tv.root).id;
   tv.draft = "";
   try {
-    const { message } = await postJson(`/api/chat/${tv.chatId}/send`, { text, reply_to: target, thread_root: tv.rootId,
+    const { message } = await postJson(`/api/chat/${tv.chatId}/send`, { text: expandMentions(tv.chatId, text), reply_to: target, thread_root: tv.rootId,
       topic: tv.chatId === currentChat ? currentTopic : null });
     lastSent = { chatId: tv.chatId, msgId: message.id, at: Date.now() };
     addToThread(message);

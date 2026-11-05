@@ -28,13 +28,27 @@ const linkify = (h) => h.replace(/https?:\/\/[^\s<]+[^\s<.,;:!?)\]]/g, (u) => `<
 const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const fold = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
 
-function tgText(text, media, highlight) {
-  let h = linkify(esc(text || ""));
-  const u = state?.me?.username;
-  if (u) h = h.replace(new RegExp("@" + reEsc(u), "gi"), (m) => `<span class="at-me">${m}</span>`);
+// ments: tags of people by name, [offset, length, user_id] (UTF-16 offsets, same as JS strings).
+function tgText(text, media, highlight, ments) {
+  text = text || "";
+  let h = "", pos = 0;
+  for (const [off, len, uid] of [...(ments || [])].sort((a, b) => a[0] - b[0])) {
+    if (off < pos || off >= text.length) continue;
+    h += plainText(text.slice(pos, off));
+    h += `<span class="${uid === state?.me?.peer ? "at-me" : "at-mention"}">${esc(text.slice(off, off + len))}</span>`;
+    pos = off + len;
+  }
+  h += plainText(text.slice(pos));
   if (highlight) h = h.replace(new RegExp(`(${reEsc(esc(highlight))})(?![^<]*>)`, "gi"), "<mark>$1</mark>");
   const med = media ? `<span class="media">[${esc(media)}]</span>${text ? " " : ""}` : "";
   return med + h;
+}
+
+// Plain text: links, and @username tags (yours highlighted like Slack's mentions of you).
+function plainText(t) {
+  const mine = (state?.me?.username || "").toLowerCase();
+  return linkify(esc(t)).replace(/(^|[\s(])@([A-Za-z0-9_]{4,32})\b/g, (_, pre, u) =>
+    `${pre}<span class="${u.toLowerCase() === mine ? "at-me" : "at-mention"}">@${u}</span>`);
 }
 
 function md(text) {
@@ -796,7 +810,7 @@ function sendMessage(host, chatId, text, replyTo) {
       $("button", el)?.setAttribute("disabled", "");
       $(".lbl", el).textContent = "Sending…";
       try {
-        resolve((await postJson(`/api/chat/${chatId}/send`, { text, reply_to: replyTo || null, topic: chatId === currentChat ? currentTopic : null })).message);
+        resolve((await postJson(`/api/chat/${chatId}/send`, { text: expandMentions(chatId, text), reply_to: replyTo || null, topic: chatId === currentChat ? currentTopic : null })).message);
       } catch (e) {
         reject(e);
       } finally {
@@ -838,7 +852,7 @@ function msgRow(m, prev, { actions = "", tag = "", cls = "", highlight = "", aft
   const bar = actions ? `<div class="hover-bar">${actions}</div>` : "";
   const img = imageHtml(m);
   const edited = m.edited ? ` <span class="edited">(edited)</span>` : "";
-  const text = (m.text || (!img && m.media)) ? `<div class="tg-text">${tgText(m.text, img ? null : m.media, highlight)}${edited}</div>` : "";
+  const text = (m.text || (!img && m.media)) ? `<div class="tg-text">${tgText(m.text, img ? null : m.media, highlight, m.ments)}${edited}</div>` : "";
   const reacts = (m.reactions || []).length ? `<div class="reacts">${m.reactions.map((r) =>
     `<button class="react-chip ${r.mine ? "mine" : ""}" data-emo="${esc(r.emoji)}" title="${r.mine ? "Remove your reaction" : "React with " + esc(r.emoji)}">${esc(r.emoji)} <b>${r.count}</b></button>`).join("")}</div>` : "";
   const pin = m.pinned ? `<div class="pin-tag">📌 Pinned</div>` : "";
