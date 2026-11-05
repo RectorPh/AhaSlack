@@ -159,6 +159,16 @@
       return json({ chat: chatInfo(c), tier: c.tier, why: c.why, topic: topic ? TOPICS[String(id)]?.find((t) => t.id === topic) : null,
         read_upto: c.unread_count ? msgs[Math.max(0, msgs.length - Math.min(c.unread_count, 3)) - 1]?.id || 0 : 1e9, messages: msgs, has_older: false, has_newer: false });
     }
+    if (p === "/api/stickers") return json({ recent: [], faved: [], sets: [], emoji_sets: [] });
+    if (p === "/api/gifs") return json({ gifs: [] });
+    if ((m = p.match(/^\/api\/chat\/(-?\d+)\/sticker$/))) {
+      const b = JSON.parse(opts.body || "{}");
+      window.__demoStickers = [...(window.__demoStickers || []), b];
+      const t = at(0, now.getHours(), now.getMinutes());
+      return json({ message: { id: 9500 + window.__demoStickers.length, chat_id: Number(m[1]), topic_id: null, image: null, date: t.date, sender: { ...ME, id: 1 }, text: "",
+        out: true, mentioned: false, reply_to_me: false, reply_to: b.reply_to || null, thread_top: b.thread_root || null, reply_count: 0, media: "sticker", forwarded: false, fwd: null,
+        link: null, pinned: false, edited: false, reactions: [], flags: ["from_me"] } });
+    }
     if ((m = p.match(/^\/api\/chat\/(-?\d+)\/upload$/))) {  // pretend to send: echo a message back
       const id = Number(m[1]);
       const name = decodeURIComponent(opts.headers?.["X-Filename"] || "file");

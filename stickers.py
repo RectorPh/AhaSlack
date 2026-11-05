@@ -14,15 +14,17 @@ from pathlib import Path
 from telethon import types, utils
 from telethon.tl.functions.messages import (GetAllStickersRequest, GetEmojiStickersRequest,
                                             GetFavedStickersRequest, GetRecentStickersRequest,
-                                            GetStickerSetRequest)
+                                            GetSavedGifsRequest, GetStickerSetRequest)
 from telethon.tl.functions.payments import GetSavedStarGiftsRequest, GetStarGiftsRequest
 
 import tg
 
 DOCS: dict[int, types.Document] = {}  # every sticker document we've seen, for downloads and sending
 CACHE = tg.CACHE / "stickers"
-FORMATS = {"image/webp": ("static", ".webp"), "application/x-tgsticker": ("animated", ".json"), "video/webm": ("video", ".webm")}
-MIME = {".webp": "image/webp", ".json": "application/json", ".webm": "video/webm", ".jpg": "image/jpeg", ".png": "image/png"}
+FORMATS = {"image/webp": ("static", ".webp"), "application/x-tgsticker": ("animated", ".json"), "video/webm": ("video", ".webm"),
+           "video/mp4": ("gif", ".mp4"), "image/gif": ("gif", ".gif")}
+MIME = {".webp": "image/webp", ".json": "application/json", ".webm": "video/webm", ".jpg": "image/jpeg", ".png": "image/png",
+        ".mp4": "video/mp4", ".gif": "image/gif"}
 
 
 def doc_info(doc) -> dict | None:
@@ -58,6 +60,12 @@ async def library(client) -> dict:
     }
 
 
+async def saved_gifs(client) -> list[dict]:
+    """The GIFs you saved in Telegram (newest first), sendable like stickers."""
+    res = await client(GetSavedGifsRequest(hash=0))
+    return [i for i in (doc_info(d) for d in getattr(res, "gifs", []) or []) if i]
+
+
 async def sticker_set(client, set_id: int, access_hash: int) -> list[dict]:
     res = await client(GetStickerSetRequest(stickerset=types.InputStickerSetID(id=set_id, access_hash=access_hash), hash=0))
     return [i for i in (doc_info(d) for d in res.documents) if i]
@@ -76,7 +84,7 @@ async def file_for(client, doc_id: int, thumb: bool) -> tuple[Path, str] | None:
             if not data:
                 return None
             path.write_bytes(data)
-        return path, "image/webp" if data_is_webp(path) else "image/jpeg"
+        return path, "image/webp" if data_is_webp(path) else "image/jpeg"  # GIF previews are JPEGs
     fmt, ext = FORMATS.get(doc.mime_type, ("static", ".webp"))
     path = CACHE / f"{doc_id}{ext}"
     if not path.exists():

@@ -746,15 +746,25 @@ async def send_sticker(chat_id: int, request: Request):
     body = await request.json()
     doc_id = int(body.get("doc_id"))
     topic = int(body.get("topic") or 0)
+    reply_to = int(body.get("reply_to") or 0) or None  # a sticker or GIF in a thread
+    if not reply_to and c.forum and topic and topic != tg.GENERAL_TOPIC:
+        reply_to = topic
     try:
-        msg = await stickers.send_sticker(inbox.client, inbox.cfg, c, doc_id,
-                                          topic if c.forum and topic and topic != tg.GENERAL_TOPIC else None)
+        msg = await stickers.send_sticker(inbox.client, inbox.cfg, c, doc_id, reply_to)
     except LookupError as exc:
         raise HTTPException(404, str(exc))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f"Telegram refused the sticker: {exc}")
     inbox.db.add_visit(c.id, "send")
+    if body.get("reply_to") and body.get("thread_root"):
+        inbox.track_thread(c, msg | {"ts": time.time()}, root=int(body["thread_root"]))
     return {"message": msg}
+
+
+@app.get("/api/gifs")
+async def gif_list():
+    """Your saved GIFs, for the picker's GIFs tab."""
+    return {"gifs": await stickers.saved_gifs(inbox.client)}
 
 
 @app.get("/api/gifts")

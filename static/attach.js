@@ -184,7 +184,13 @@ const _renderThreadAttach = renderThread;
 renderThread = function () {
   _renderThreadAttach();
   addPlus($("#thread-composer"));
+  const bar = $("#thread-composer .composer-bar");
+  if (bar && !$(".pk-btn", bar)) {  // emoji, stickers and GIFs in the thread too
+    bar.insertAdjacentHTML("afterbegin", `<button type="button" class="pk-btn" title="Emoji, stickers and GIFs (⌘⌥E)">☺</button>`);
+    $(".pk-btn", bar).addEventListener("click", () => togglePicker("thread"));
+  }
   renderTray("thread");
+  if (typeof placePicker === "function") placePicker();
 };
 // Switching conversations or closing the thread drops what was waiting.
 const _openChatAttach = openChat;

@@ -153,8 +153,8 @@ function renderThread() {
       ${tv.error ? `<div class="empty err">${esc(tv.error)}</div>` : ""}
     </div>
     ${state.sending_enabled ? `<form class="composer" id="thread-composer">
-      ${target ? `<div class="reply-chip"><span class="rc-text">↩ Reply to <b>${esc(name(target))}</b>${tv.target ? `: ${esc((target.text || target.media || "").slice(0, 80))}` : ""}</span>${tv.target ? `<button type="button" class="icon-btn" data-th-retarget title="Reply to the thread instead">✕</button>` : ""}</div>` : ""}
-      <textarea rows="1" id="thread-input" placeholder="Reply…"></textarea>
+      ${tv.target ? `<div class="reply-chip"><span class="rc-text">↩ Reply to <b>${esc(name(tv.target))}</b>: ${esc((tv.target.text || tv.target.media || "").slice(0, 80))}</span><button type="button" class="icon-btn" data-th-retarget title="Reply to the thread instead">✕</button></div>` : ""}
+      <textarea rows="1" id="thread-input" placeholder="Reply in thread…"></textarea>
       <div class="composer-bar"><span class="hint">Sends as a Telegram reply · lands in this thread</span><button type="submit" class="send" title="Send (Enter)">➤</button></div>
     </form>` : `<div class="pane-note">Replying needs sending_enabled = true in config.toml.</div>`}`;
   const box = $(".thread-scroll", mount);

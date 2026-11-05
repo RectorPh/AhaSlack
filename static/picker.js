@@ -1,11 +1,14 @@
 "use strict";
-// Emoji, custom emoji, stickers and gifts from your Telegram, in a picker by the message box.
-// Unicode emoji use emoji-picker-element; custom emoji, stickers and gifts come from /api.
-// Stickers send on click like Telegram; gifts are view-only (they cost Stars).
+// Emoji, custom emoji, stickers, GIFs and gifts from your Telegram, in a picker above the message
+// box you opened it from: the channel's box or the thread pane's. Unicode emoji use
+// emoji-picker-element; the rest come from /api. Stickers and GIFs send on click like Telegram
+// (in a thread they go in as replies); gifts are view-only (they cost Stars).
 
 let pickerLib = null;          // /api/stickers
 const pickerSets = {};         // set id -> stickers
 let pickerTab = "emoji";
+let pickerFor = "chat";          // which box: "chat" (the channel) or "thread" (the thread pane)
+let pickerGifs = null;           // /api/gifs
 
 // ---------------------------------------------------------------- sticker tiles (static, Lottie, video)
 function stickerTile(doc, { thumb = true, cls = "", attrs = "" } = {}) {
@@ -15,6 +18,7 @@ function stickerTile(doc, { thumb = true, cls = "", attrs = "" } = {}) {
   if (thumb && doc.has_thumb) inner = `<img loading="lazy" alt="${esc(doc.emoji)}" src="${src}?thumb=1">`;
   else if (doc.format === "animated") inner = `<div class="lottie" data-lottie="${src}"></div>`;
   else if (doc.format === "video") inner = `<video src="${src}" autoplay loop muted playsinline></video>`;
+  else if (doc.format === "gif") inner = `<video src="${src}" ${doc.has_thumb ? `poster="${src}?thumb=1"` : ""} loop muted playsinline preload="none" data-hoverplay></video>`;
   else inner = `<img loading="lazy" alt="${esc(doc.emoji)}" src="${src}">`;
   return `<button type="button" class="stk-tile ${cls}" data-doc="${doc.id}" title="${esc(doc.emoji)}" ${attrs}>${inner}</button>`;
 }
@@ -39,10 +43,10 @@ new MutationObserver(() => {
 // ---------------------------------------------------------------- the panel
 function ensurePicker() {
   if ($("#picker")) return $("#picker");
-  $("#chat-composer").insertAdjacentHTML("beforebegin", `<div class="picker" id="picker" hidden>
+  document.body.insertAdjacentHTML("beforeend", `<div class="picker floating" id="picker" hidden>
     <div class="picker-tabs">
-      <button data-ptab="emoji">😀 Emoji</button><button data-ptab="custom">✨ Custom emoji</button>
-      <button data-ptab="stickers">🗂 Stickers</button><button data-ptab="gifts">🎁 Gifts</button>
+      <button data-ptab="emoji">😀 Emoji</button><button data-ptab="custom">✨ Custom</button>
+      <button data-ptab="stickers">🗂 Stickers</button><button data-ptab="gifs">🎞 GIFs</button><button data-ptab="gifts">🎁 Gifts</button>
       <span class="sp"></span><button data-pclose title="Close (Esc)">✕</button>
     </div>
     <div class="picker-body" id="picker-body"></div></div>`);
@@ -50,14 +54,38 @@ function ensurePicker() {
   p.addEventListener("click", onPickerClick);
   return p;
 }
-function openPicker(tab = pickerTab) {
-  if (view !== "chat") return toast("Open a conversation first");
+const pickerForm = () => (pickerFor === "thread" ? $("#thread-composer") : $("#chat-composer"));
+function placePicker() {  // just above the box it belongs to, as wide as the box
+  const p = $("#picker"), f = pickerForm();
+  if (!p || p.hidden || !f) return;
+  const r = f.getBoundingClientRect();
+  const w = Math.max(340, Math.min(r.width, 640));
+  p.style.width = w + "px";
+  p.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + "px";
+  p.style.height = Math.max(220, Math.min(380, r.top - 60)) + "px";
+  p.style.bottom = (window.innerHeight - r.top + 6) + "px";
+}
+function openPicker(tab = pickerTab, target = null) {
+  pickerFor = target || (document.activeElement?.closest?.("#thread-composer, #pane") ? "thread" : "chat");
+  if (pickerFor === "chat" && view !== "chat") return toast("Open a conversation first");
+  if (pickerFor === "thread" && !threadView) pickerFor = "chat";
   const p = ensurePicker();
   p.hidden = false;
+  p.dataset.for = pickerFor;
+  placePicker();
   showPickerTab(tab);
 }
 function closePicker() { const p = $("#picker"); if (p) p.hidden = true; }
-function togglePicker() { ($("#picker") && !$("#picker").hidden) ? closePicker() : openPicker(); }
+function togglePicker(target = null) {
+  const p = $("#picker");
+  const want = target || (document.activeElement?.closest?.("#thread-composer, #pane") ? "thread" : "chat");
+  (p && !p.hidden && p.dataset.for === want) ? closePicker() : openPicker(pickerTab, want);
+}
+window.addEventListener("resize", placePicker);
+document.addEventListener("mousedown", (e) => {  // click outside closes it, like Slack
+  const p = $("#picker");
+  if (p && !p.hidden && !e.target.closest("#picker, .pk-btn, emoji-picker")) closePicker();
+});
 
 async function showPickerTab(tab) {
   pickerTab = tab;
@@ -69,6 +97,7 @@ async function showPickerTab(tab) {
     return;
   }
   if (tab === "gifts") return showGifts(body);
+  if (tab === "gifs") return showGifs(body);
   body.innerHTML = `<div class="loading">Loading your ${tab === "custom" ? "custom emoji" : "stickers"}…</div>`;
   try { pickerLib = pickerLib || await api("/api/stickers"); } catch (e) { body.innerHTML = `<div class="empty err">${esc(e.message)}</div>`; return; }
   if (tab === "stickers") {
@@ -108,18 +137,23 @@ async function onPickerClick(e) {
   if (tile.dataset.gift !== undefined) return;
 }
 function insertIntoComposer(text) {
-  const t = $("#chat-input");
+  const t = pickerFor === "thread" ? $("#thread-input") : $("#chat-input");
+  if (!t) return;
   t.focus();
   if (!document.execCommand("insertText", false, text)) t.setRangeText(text, t.selectionStart, t.selectionEnd, "end");
   t.dispatchEvent(new Event("input"));
 }
 async function sendSticker(docId) {
   if (!needWrites()) return;
-  const chatId = currentChat;
+  const tv = pickerFor === "thread" ? threadView : null;
+  const chatId = tv ? tv.chatId : currentChat;
   closePicker();
   try {
-    const { message } = await postJson(`/api/chat/${chatId}/sticker`, { doc_id: docId, topic: currentTopic });
+    const { message } = await postJson(`/api/chat/${chatId}/sticker`, tv
+      ? { doc_id: docId, reply_to: (tv.target || tv.root)?.id, thread_root: tv.rootId }   // into the thread
+      : { doc_id: docId, topic: currentTopic });
     lastSent = { chatId, msgId: message.id, at: Date.now() };
+    if (tv) { if (typeof addToThread === "function") addToThread(message); return; }
     if (view === "chat" && currentChat === chatId && !chatMessages.some((m) => m.id === message.id)) {
       chatMessages.push(message);
       rerenderChat();
@@ -127,6 +161,17 @@ async function sendSticker(docId) {
     }
   } catch (err) { toast(`Sticker not sent: ${esc(err.message)}`, true); }
 }
+
+// ---------------------------------------------------------------- GIFs (your saved GIFs in Telegram)
+async function showGifs(body) {
+  body.innerHTML = `<div class="loading">Loading your GIFs…</div>`;
+  try { pickerGifs = pickerGifs || (await api("/api/gifs")).gifs; } catch (e) { body.innerHTML = `<div class="empty err">${esc(e.message)}</div>`; return; }
+  body.innerHTML = pickerGifs.length
+    ? `<div class="pk-note">Your saved GIFs from Telegram. Click one to send it${pickerFor === "thread" ? " to the thread" : ""}.</div><div class="gif-grid">${pickerGifs.map((d) => stickerTile(d, { cls: "gif", attrs: 'data-send="1"' })).join("")}</div>`
+    : `<div class="empty">No saved GIFs yet.<br><span class="sub">In Telegram, long-press (or right-click) a GIF and choose "Save GIF"; it shows up here.</span></div>`;
+}
+document.addEventListener("mouseover", (e) => { const v = e.target.closest?.("video[data-hoverplay]"); if (v) v.play().catch(() => {}); });
+document.addEventListener("mouseout", (e) => { const v = e.target.closest?.("video[data-hoverplay]"); if (v && !v.contains(e.relatedTarget)) v.pause(); });
 
 // ---------------------------------------------------------------- gifts (view only)
 async function showGifts(body) {
@@ -146,7 +191,7 @@ async function showGifts(body) {
 (function addPickerButton() {
   const bar = $("#chat-composer .composer-bar");
   bar.insertAdjacentHTML("afterbegin", `<button type="button" class="pk-btn" id="picker-btn" title="Emoji, stickers and gifts (⌘⇧E… or click)">☺</button>`);
-  $("#picker-btn").addEventListener("click", togglePicker);
+  $("#picker-btn").addEventListener("click", () => togglePicker("chat"));
 })();
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && $("#picker") && !$("#picker").hidden) { e.stopPropagation(); closePicker(); }
