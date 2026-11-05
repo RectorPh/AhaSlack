@@ -49,6 +49,14 @@ CREATE INDEX IF NOT EXISTS threads_last ON threads(last_ts DESC);
 -- Where you go and what you write (for Slack-style "frecency" ranking in search and ⌘K).
 CREATE TABLE IF NOT EXISTS visits (chat_id INTEGER NOT NULL, ts REAL NOT NULL, kind TEXT NOT NULL, q TEXT);
 CREATE INDEX IF NOT EXISTS visits_chat ON visits(chat_id, ts DESC);
+-- Your ✓/✗ verdicts on thread grouping decisions (the accuracy check), kept as training data.
+CREATE TABLE IF NOT EXISTS thread_labels (
+    key TEXT PRIMARY KEY,                 -- "chat_id:msg_id:kind"
+    chat_id INTEGER NOT NULL, msg_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,                   -- reply | split | burst | answer | revive | missed
+    root_id INTEGER, verdict INTEGER NOT NULL,  -- 1 = the rule was right, 0 = wrong
+    rules TEXT, ts REAL NOT NULL, data TEXT
+);
 CREATE TABLE IF NOT EXISTS thread_msgs (chat_id INTEGER, msg_id INTEGER, root_id INTEGER, PRIMARY KEY(chat_id, msg_id));
 """
 DROP = ("done", "flags")  # per-request fields that shouldn't be stored
@@ -269,6 +277,30 @@ class MentionDB:
             "SELECT lower(q) AS q, chat_id, COUNT(*) AS n FROM visits WHERE kind = 'switch' AND q IS NOT NULL "
             "GROUP BY lower(q), chat_id ORDER BY n DESC LIMIT ?", (limit,)).fetchall()
         return [[r["q"], r["chat_id"], r["n"]] for r in rows]
+
+    # ------------------------------------------------------------- thread accuracy labels
+    def add_labels(self, items: list[dict]) -> int:
+        now = time.time()
+        with self.conn:
+            for it in items:
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO thread_labels VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (f"{it['chat_id']}:{it['msg_id']}:{it['kind']}", int(it["chat_id"]), int(it["msg_id"]), str(it["kind"]),
+                     it.get("root_id"), 1 if it["verdict"] else 0, it.get("rules"), now,
+                     json.dumps(it.get("data") or {}, ensure_ascii=False)))
+        return len(items)
+
+    def label_summary(self, rules: str | None = None) -> dict:
+        q = "SELECT kind, COUNT(*) n, SUM(verdict) ok FROM thread_labels"
+        args: list = []
+        if rules:
+            q += " WHERE rules = ?"
+            args.append(rules)
+        rows = self.conn.execute(q + " GROUP BY kind", args).fetchall()
+        return {r["kind"]: {"n": r["n"], "ok": r["ok"] or 0} for r in rows}
+
+    def labeled_keys(self) -> list[str]:
+        return [r["key"] for r in self.conn.execute("SELECT key FROM thread_labels")]
 
 
 def _j(v) -> str | None:

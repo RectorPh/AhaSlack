@@ -713,7 +713,7 @@ $("#nav-fwd").addEventListener("click", goForward);
 
 function setView(name) {
   view = name;
-  for (const v of ["manager", "chat", "mentions", "search", "unreads", "more", "files", "threads"]) $("#view-" + v).hidden = v !== name;
+  for (const v of ["manager", "chat", "mentions", "search", "unreads", "more", "files", "threads", "threadcheck"]) $("#view-" + v).hidden = v !== name;
   $$(".rail-btn").forEach((b) => b.classList.toggle("active",
     b.dataset.rail === (name === "mentions" ? "mentions" : name === "manager" ? "manager" : "home")));
   $("#sidebar").classList.remove("open");
@@ -725,7 +725,7 @@ function setView(name) {
       `<button class="btn" data-act="new-convo">＋ <span class="lbl">New conversation</span></button>`);
   } else if (name === "threads") {
     header(`<span class="hash">🧵</span><h1>Threads</h1><span class="topic">Threads you replied in, and replies to you</span>`,
-      `<button class="btn" data-act="threads-read-all">✓ <span class="lbl">Mark all as read</span></button><button class="btn" data-act="threads-refresh">↻ <span class="lbl">Refresh</span></button>`);
+      `<button class="btn" data-act="thread-check" title="Check how well replies are grouped into threads">🎯 <span class="lbl">Check accuracy</span></button><button class="btn" data-act="threads-read-all">✓ <span class="lbl">Mark all as read</span></button><button class="btn" data-act="threads-refresh">↻ <span class="lbl">Refresh</span></button>`);
   } else if (name === "mentions") {
     header(`<span class="hash">@</span><h1>Mentions &amp; replies</h1><span class="topic">Click one to jump to it in its chat</span>`,
       `<button class="btn" data-act="done-all">✓ <span class="lbl">Mark all as read</span></button><button class="btn" data-act="summarize-mentions">✦ <span class="lbl">Summarize</span></button><button class="btn" data-act="recheck">↻ <span class="lbl">Re-check</span></button>`);
@@ -748,6 +748,8 @@ $("#ch-actions").addEventListener("click", async (e) => {
     renderHistory([]);
   } else if (act === "topic-needs") {
     if (currentTopic) toggleNeedsTopic(currentChat, currentTopic); else toggleNeedsChat(currentChat);
+  } else if (act === "thread-check") {
+    openThreadCheck();
   } else if (act === "threads-read-all") {
     markAllThreadsRead();
   } else if (act === "threads-refresh") {
@@ -1743,6 +1745,7 @@ function switcherCommands() {
   }
   for (const { c, t } of pinnedTopics()) add(`Remove # ${t.title} (${c.name}) from Needs you`, () => toggleNeedsTopic(c.id, t.id), { icon: "📌", keywords: "needs you unpin topic" });
   add(`${uiPrefs.calm ? "Leave" : "Enter"} Calm Space`, () => toggleCalm(), { icon: "☾", key: plainCombo("Mod+J"), keywords: "focus zen hide sidebar" });
+  add("Check thread accuracy", () => openThreadCheck(), { icon: "🎯", keywords: "threads accuracy grouping rules label test" });
   add(`Threads: ${uiPrefs.threads === false ? "group replies into threads" : "show replies inline (Telegram style)"}`, () => pref("threads", uiPrefs.threads === false), { icon: "🧵", keywords: "threads replies grouping" });
   add(`Notifications: ${uiPrefs.notify === false ? "turn on" : "turn off"}`, () => pref("notify", uiPrefs.notify === false), { icon: "🔔", keywords: "notify alerts desktop" });
   if (typeof READ_MODES !== "undefined") for (const [k, l] of Object.entries(READ_MODES)) add(`Mark as read: ${l}`, () => pref("readMode", k), { icon: "✓", on: (uiPrefs.readMode || "leftoff") === k, keywords: "read unread reading" });
@@ -1987,7 +1990,7 @@ function switchTab(dir, index) {
   const next = index != null ? tabs[index] : tabs[(cur + dir + tabs.length) % tabs.length];
   next?.click();
 }
-const FEEDS = { chat: "#chat-feed", manager: "#thread", mentions: "#mention-feed", threads: "#threads-feed", search: "#search-feed", unreads: "#unreads-feed" };
+const FEEDS = { chat: "#chat-feed", manager: "#thread", mentions: "#mention-feed", threads: "#threads-feed", threadcheck: "#threadcheck-feed", search: "#search-feed", unreads: "#unreads-feed" };
 function cycleFocus(dir) {
   const composer = view === "chat" ? $("#chat-input") : view === "manager" ? $("#input") : null;
   const regions = [$("#sections .sb-item.active") || $(".sb-top .sb-item.active") || $(".sb-top .sb-item"), $(FEEDS[view]), composer].filter(Boolean);

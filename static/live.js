@@ -265,6 +265,7 @@ openShortcuts = function (tab = "prefs") {
     <div class="sc-group">Threads</div>
     <label class="pref"><input type="checkbox" name="threads" ${uiPrefs.threads === false ? "" : "checked"}> Group replies into threads, like Slack (replies open on the right instead of in the channel)</label>
     <label class="pref"><input type="checkbox" name="threadGuess" ${uiPrefs.threadGuess === false ? "" : "checked"}> Also guess: group follow-ups and short answers sent without Reply (marked AUTO; ⇱ undoes one)</label>
+    <div class="pref-sub"><a href="#" onclick="closeShortcuts(); openThreadCheck(); return false;">🎯 Check how accurate the grouping is</a></div>
     <div class="sc-group">Sidebar</div>
     <label class="pref">Sort <select name="sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${(uiPrefs.sort || "priority") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
       Show <select name="show">${Object.entries(SHOWS).map(([k, l]) => `<option value="${k}" ${(uiPrefs.show || "all") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>

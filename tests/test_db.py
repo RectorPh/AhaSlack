@@ -89,3 +89,13 @@ def test_picks_remember_what_you_typed(tmp_path):
     d.add_visit(7, "switch", "lin")
     d.add_visit(8, "switch", "lin")
     assert d.picks()[0] == ["lin", 7, 2]
+
+
+def test_thread_labels_summary(tmp_path):
+    d = MentionDB(tmp_path / "t.db")
+    d.add_labels([{"chat_id": 1, "msg_id": 2, "kind": "burst", "verdict": True, "rules": "v2"},
+                  {"chat_id": 1, "msg_id": 3, "kind": "burst", "verdict": False, "rules": "v2"},
+                  {"chat_id": 1, "msg_id": 3, "kind": "burst", "verdict": True, "rules": "v2"}])  # changed your mind: replaces
+    assert d.label_summary("v2") == {"burst": {"n": 2, "ok": 2}}
+    assert d.label_summary("v1") == {}
+    assert sorted(d.labeled_keys()) == ["1:2:burst", "1:3:burst"]

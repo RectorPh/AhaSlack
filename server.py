@@ -692,6 +692,19 @@ async def msg_reactions(chat_id: int, msg_id: int):
         raise HTTPException(403, str(exc))
 
 
+@app.get("/api/thread-labels")
+async def thread_labels(rules: str | None = None):
+    """The accuracy check's results so far: per rule, how many you checked and how many were right."""
+    return {"summary": inbox.db.label_summary(rules), "labeled": inbox.db.labeled_keys()}
+
+
+@app.post("/api/thread-labels")
+async def add_thread_labels(request: Request):
+    """Your ✓/✗ on thread grouping decisions (local only; training data for a future model)."""
+    items = (await request.json()).get("items") or []
+    return {"saved": inbox.db.add_labels(items[:500])}
+
+
 @app.post("/api/visit")
 async def visit(request: Request):
     """You opened a chat (or picked it in ⌘K after typing q): feeds search ranking."""
