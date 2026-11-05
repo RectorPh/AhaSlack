@@ -54,3 +54,15 @@ def test_threads_you_are_in(tmp_path):
     assert d.thread_read(1, 10) and d.thread_unread_count() == 0
     assert d.thread_list()[0][0]["root"]["text"] == "root"
     assert d.thread_unread_count({1}) == 0
+
+
+def test_thread_read_unread_and_read_all(tmp_path):
+    d = MentionDB(tmp_path / "t.db")
+    r = lambda i: {"id": i, "ts": 1000 + i, "out": False}
+    d.thread_touch(1, 10, reply=r(11), unread=True)
+    d.thread_touch(2, 20, reply=r(21), unread=True)
+    d.thread_touch(3, 30, reply=r(31), unread=True)
+    assert d.thread_read(1, 10) and d.thread_unread_count() == 2
+    assert d.thread_mark_unread(1, 10) and d.thread_unread_count() == 3
+    assert d.thread_read_all(exclude_chats={3}) == 2   # ignored chats are left alone
+    assert d.thread_unread_count() == 1 and d.thread_unread_count({3}) == 0

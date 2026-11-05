@@ -62,7 +62,8 @@ parts of Slack that make a busy inbox manageable.
 - Open a thread and it slides in on the right, with **its own message box**. What you send
   there is a normal Telegram reply, so it lands in the same thread for everyone else.
 - The **Threads** view lists every thread you're in (you replied, or someone replied to you),
-  with a badge for new replies.
+  with a badge for new replies, an **Unread** tab, **Mark as read / Mark unread** on each
+  thread, and **Mark all as read**.
 - Grouping is **rule-based** today: Telegram reply chains, plus someone's quick follow-up
   right after their own thread reply (marked *AUTO*; one click moves it back, and the
   correction is remembered). There's a hook ready for a small local model to classify messages
@@ -113,8 +114,9 @@ Claude Code login. **It can only read**: it has no tool that sends, edits or mar
 - **Keyboard first:** Slack's full shortcut list, every one rebindable from **⌘/**.
 - **Themes:** light, dark or follow your Mac; nine sidebar themes (Aubergine, Jade, Lagoon,
   Indigo, Ember, Forest, Graphite, Paper, Sand) or your own colors, in Preferences (**⌘,**).
-- **Sounds:** a short sound for DMs and mentions (pick from seven, with volume), synthesized
-  in the app.
+- **Sounds:** a different sound for DMs, mentions and new thread replies (seven to choose
+  from, with volume), synthesized in the app. The 🔔 in the top bar mutes them, for 30 minutes,
+  an hour, until tomorrow or until you turn them back on (**⌘⌥⇧M**).
 - **Telegram Topics as channels:** each topic gets its own messages, composer and mark-read.
 
 <img alt="A Telegram topic shown as a Slack channel" src="docs/screenshots/topics.png" width="100%">

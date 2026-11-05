@@ -72,7 +72,10 @@ function onLiveMessage(ev) {
   const inOpen = threadView && threadView.chatId === chat.id && addToThread(m);
   if (ev.thread) {
     if (inOpen && document.hasFocus()) markThreadRead(chat.id, ev.thread.root_id);
-    else setThreadsBadge(ev.thread.unread);
+    else {
+      setThreadsBadge(ev.thread.unread);
+      if (!m.out && !ev.notify && uiPrefs.notify !== false) playNotifySound("thread");  // a new reply in a thread you're in
+    }
     if (view === "threads") loadThreads();
   }
   // Activity
@@ -137,12 +140,12 @@ function notify(chat, m) {
   if (uiPrefs.notify === false) return;
   const looking = document.hasFocus() && !document.hidden && view === "chat" && currentChat === chat.id;
   if (looking) return;
-  playNotifySound();  // sounds.js
+  playNotifySound(chat.kind === "dm" ? "dm" : "mention");  // sounds.js
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   const who = m.sender?.name || chat.name;
   const n = new Notification(chat.kind === "dm" ? who : `${who} in ${chat.name}`, {
     body: (m.text || (m.media ? `[${m.media}]` : "")).slice(0, 180),
-    tag: `${chat.id}`, silent: soundsOn(),  // our own sound instead of the system's
+    tag: `${chat.id}`, silent: soundsOn(chat.kind === "dm" ? "dm" : "mention"),  // our own sound instead of the system's
   });
   n.onclick = () => { window.focus(); navigate({ view: "chat", chatId: chat.id, focus: m.id, topic: m.topic_id || undefined }); n.close(); };
 }

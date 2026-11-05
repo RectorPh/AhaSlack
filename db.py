@@ -194,6 +194,17 @@ class MentionDB:
             cur = self.conn.execute("UPDATE threads SET unread = 0 WHERE key = ? AND unread > 0", (f"{chat_id}:{root_id}",))
         return cur.rowcount > 0
 
+    def thread_mark_unread(self, chat_id: int, root_id: int) -> bool:
+        with self.conn:
+            cur = self.conn.execute("UPDATE threads SET unread = MAX(unread, 1) WHERE key = ?", (f"{chat_id}:{root_id}",))
+        return cur.rowcount > 0
+
+    def thread_read_all(self, exclude_chats: set[int] = frozenset()) -> int:
+        rows = [r["key"] for r in self.conn.execute("SELECT key, chat_id FROM threads WHERE unread > 0") if r["chat_id"] not in exclude_chats]
+        with self.conn:
+            self.conn.executemany("UPDATE threads SET unread = 0 WHERE key = ?", [(k,) for k in rows])
+        return len(rows)
+
     def thread_unread_count(self, exclude_chats: set[int] = frozenset()) -> int:
         rows = self.conn.execute("SELECT chat_id FROM threads WHERE unread > 0")
         return sum(1 for r in rows if r["chat_id"] not in exclude_chats)

@@ -613,7 +613,7 @@ function setView(name) {
       `<button class="btn" data-act="new-convo">＋ <span class="lbl">New conversation</span></button>`);
   } else if (name === "threads") {
     header(`<span class="hash">🧵</span><h1>Threads</h1><span class="topic">Threads you replied in, and replies to you</span>`,
-      `<button class="btn" data-act="threads-refresh">↻ <span class="lbl">Refresh</span></button>`);
+      `<button class="btn" data-act="threads-read-all">✓ <span class="lbl">Mark all as read</span></button><button class="btn" data-act="threads-refresh">↻ <span class="lbl">Refresh</span></button>`);
   } else if (name === "mentions") {
     header(`<span class="hash">@</span><h1>Mentions &amp; replies</h1><span class="topic">Click one to jump to it in its chat</span>`,
       `<button class="btn" data-act="done-all">✓ <span class="lbl">Mark all as read</span></button><button class="btn" data-act="summarize-mentions">✦ <span class="lbl">Summarize</span></button><button class="btn" data-act="recheck">↻ <span class="lbl">Re-check</span></button>`);
@@ -634,6 +634,8 @@ $("#ch-actions").addEventListener("click", async (e) => {
     if (busy) return;
     await api("/api/reset", { method: "POST" });
     renderHistory([]);
+  } else if (act === "threads-read-all") {
+    markAllThreadsRead();
   } else if (act === "threads-refresh") {
     loadThreads();
   } else if (act === "recheck") {
@@ -2002,6 +2004,7 @@ function resizeSidebar(delta) {
 async function loadPrefs() {
   try { const p = await api("/api/prefs"); overrides = p.shortcuts || {}; uiPrefs = p.ui || {}; } catch { overrides = {}; }
   if (typeof applyTheme === "function") applyTheme();
+  if (typeof updateBell === "function") updateBell();
   if (typeof applyCalm === "function") applyCalm();
   renderSidebar();
   const jump = bindingOf(action("quickSwitcher"));

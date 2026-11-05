@@ -163,6 +163,8 @@ function buildMenu() {
     { label: "Edit", submenu: [{ role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "pasteAndMatchStyle" }, { role: "selectAll" }] },
     { label: "View", submenu: [
       { label: "Calm Space", accelerator: "CmdOrCtrl+J", click: page("toggleCalm()") },
+      { label: "Mute Sounds", accelerator: "CmdOrCtrl+Alt+Shift+M", click: page("toggleMute()") },
+      { label: "Sound Settings…", click: page("openSoundSettings()") },
       { type: "separator" }, { role: "reload" }, { role: "toggleDevTools" }, { type: "separator" },
       { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" },
     ] },

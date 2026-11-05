@@ -828,8 +828,18 @@ async def threads(limit: int = 30, before: float | None = None, unread: bool = F
 async def threads_read(request: Request):
     """You opened a thread: its new replies are seen (in the app only; Telegram is untouched)."""
     body = await request.json()
-    inbox.db.thread_read(int(body["chat_id"]), int(body["root_id"]))
+    if body.get("read", True):
+        inbox.db.thread_read(int(body["chat_id"]), int(body["root_id"]))
+    else:
+        inbox.db.thread_mark_unread(int(body["chat_id"]), int(body["root_id"]))
     return {"ok": True, "unread": inbox.db.thread_unread_count(inbox.ignored)}
+
+
+@app.post("/api/threads/read-all")
+async def threads_read_all():
+    """Mark every thread you're in as read (in the app; Telegram is untouched)."""
+    n = inbox.db.thread_read_all(inbox.ignored)
+    return {"ok": True, "count": n, "unread": 0}
 
 
 @app.get("/api/context/{chat_id}/{msg_id}")

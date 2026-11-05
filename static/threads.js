@@ -231,6 +231,28 @@ $("#thread-mount").addEventListener("click", (e) => {
   }
 });
 
+async function setThreadRead(chatId, rootId, read) {
+  let res;
+  try { res = await postJson("/api/threads/read", { chat_id: chatId, root_id: rootId, read }); }
+  catch (e) { return toast(`Couldn't update: ${esc(e.message)}`, true); }
+  const t = threadsData?.items.find((x) => x.chat_id === chatId && x.root_id === rootId);
+  if (t) t.unread = read ? 0 : Math.max(1, t.unread);
+  threadsData.unread = res.unread;
+  setThreadsBadge(res.unread);
+  if (threadsFilter === "unread" && read && t) threadsData.items = threadsData.items.filter((x) => x !== t);
+  renderThreadsView();
+}
+async function markAllThreadsRead() {
+  let res;
+  try { res = await postJson("/api/threads/read-all", {}); } catch (e) { return toast(`Couldn't update: ${esc(e.message)}`, true); }
+  for (const t of threadsData?.items || []) t.unread = 0;
+  threadsData.unread = 0;
+  if (threadsFilter === "unread") threadsData.items = [];
+  setThreadsBadge(0);
+  renderThreadsView();
+  toast(`✓ Marked ${res.count} thread${res.count === 1 ? "" : "s"} as read`);
+}
+
 async function markThreadRead(chatId, rootId) {
   try {
     const res = await postJson("/api/threads/read", { chat_id: chatId, root_id: rootId });
@@ -242,6 +264,7 @@ async function markThreadRead(chatId, rootId) {
 
 // ---------------------------------------------------------------- the Threads view (threads you're in)
 let threadsData = null;
+let threadsFilter = "all";  // "all" | "unread"
 function setThreadsBadge(n) {
   if (state) state.threads_unread = n;
   const b = $("#threads-badge");
@@ -252,7 +275,7 @@ async function loadThreads(more = false) {
   if (!more) feed.innerHTML = `<div class="loading">Loading your threads…</div>`;
   const last = more && threadsData?.items[threadsData.items.length - 1];
   let data;
-  try { data = await api(`/api/threads?limit=30${last ? `&before=${last.last_ts}` : ""}`); }
+  try { data = await api(`/api/threads?limit=30${threadsFilter === "unread" ? "&unread=true" : ""}${last ? `&before=${last.last_ts}` : ""}`); }
   catch (e) { feed.innerHTML = `<div class="empty err">${esc(e.message)}</div>`; return; }
   threadsData = more ? { ...data, items: [...threadsData.items, ...data.items] } : data;
   setThreadsBadge(data.unread);
@@ -261,11 +284,17 @@ async function loadThreads(more = false) {
 function renderThreadsView() {
   const feed = $("#threads-feed");
   const items = threadsData.items;
+  const unread = threadsData.unread || 0;
+  const bar = `<div class="tabs th-tabs"><button data-th-filter="all" class="${threadsFilter === "all" ? "on" : ""}">All</button>
+      <button data-th-filter="unread" class="${threadsFilter === "unread" ? "on" : ""}">Unread${unread ? ` <span class="cnt">${unread}</span>` : ""}</button></div>
+    ${unread ? `<div class="act-summary">${unread} thread${unread === 1 ? "" : "s"} with new replies · <a href="#" data-th-read-all>Mark all as read</a></div>` : ""}`;
   if (!items.length) {
-    feed.innerHTML = `<div class="empty"><div class="big">🧵</div>No threads yet.<br><span class="sub">Threads you reply in, and replies to you, show up here.</span></div>`;
+    feed.innerHTML = bar + (threadsFilter === "unread"
+      ? `<div class="empty"><div class="big">🎉</div>No new replies in your threads.</div>`
+      : `<div class="empty"><div class="big">🧵</div>No threads yet.<br><span class="sub">Threads you reply in, and replies to you, show up here.</span></div>`);
     return;
   }
-  feed.innerHTML = items.map((t) => {
+  feed.innerHTML = bar + items.map((t) => {
     const c = t.chat;
     const where = t.topic ? `# ${esc(t.topic)} · ${esc(c.name)}` : esc(chatLabel(c));
     const root = t.root ? msgRow(t.root, null, {}) : `<div class="sub thread-noroot">The first message isn't available.</div>`;
@@ -275,15 +304,23 @@ function renderThreadsView() {
       ${root}
       <div class="tc-mid">${t.mine ? "You replied" : "Replied to you"} · latest reply:</div>
       ${last}
-      <div class="tc-foot"><button class="btn" data-open-thread>View thread ›</button></div></div>`;
+      <div class="tc-foot"><button class="btn" data-open-thread>View thread ›</button>
+        <button class="btn" data-th-toggle title="${t.unread ? "Mark this thread as read" : "Mark this thread as unread"}">${t.unread ? "✓ Mark as read" : "Mark unread"}</button></div></div>`;
   }).join("") + (threadsData.has_more ? `<button class="load-older" data-more-threads>Load older threads</button>` : "");
 }
 $("#threads-feed").addEventListener("click", (e) => {
   if (e.target.closest("[data-more-threads]")) return loadThreads(true);
+  const f = e.target.closest("[data-th-filter]");
+  if (f) { threadsFilter = f.dataset.thFilter; return loadThreads(); }
+  if (e.target.closest("[data-th-read-all]")) { e.preventDefault(); return markAllThreadsRead(); }
   if (e.target.closest("a, .att, .react-chip")) return;
   const card = e.target.closest(".thread-card");
   if (!card) return;
   const chatId = Number(card.dataset.chat), root = Number(card.dataset.root);
+  if (e.target.closest("[data-th-toggle]")) {
+    const t = threadsData.items.find((x) => x.chat_id === chatId && x.root_id === root);
+    return setThreadRead(chatId, root, !!t?.unread);
+  }
   const c = chatById(chatId);
   navigate({ view: "chat", chatId, focus: root, topic: c?.forum && card.dataset.topic ? Number(card.dataset.topic) : undefined, thread: root });
 });

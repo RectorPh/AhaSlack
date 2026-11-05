@@ -140,7 +140,7 @@
       const items = mentionsOf().filter((m) => f === "all" || (f === "unread" ? m.unread : m.kind === f));
       return json({ items, has_more: false, unread: 2, fetched_at: now / 1000 });
     }
-    if (p === "/api/threads") return json({ items: THREADS(), has_more: false, unread: 1 });
+    if (p === "/api/threads") return json({ items: THREADS().filter((t) => q.get("unread") !== "true" || t.unread), has_more: false, unread: 1 });
     if (p === "/api/unreads") return json({ items: CHATS.filter((c) => c.tier === "must").map((c) => ({ chat: c, tier: c.tier, why: c.why, messages: (MSGS[c.id] || []).slice(-2) })) });
     let m;
     if ((m = p.match(/^\/api\/chat\/(-?\d+)\/thread\/(\d+)$/))) return json(threadOf(Number(m[1]), Number(m[2])));
