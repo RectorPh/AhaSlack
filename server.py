@@ -57,6 +57,7 @@ class Inbox:
         self.shortcuts: dict[str, str] = {}  # user overrides of the default keyboard shortcuts
         self.ignored: set[int] = set()        # chats the user ignored from the app's sidebar
         self.ui: dict = {}                     # sidebar sort/show, starred chats, read behavior, ...
+        self.topics: dict[int, list[dict]] = {}  # forum group id -> its topics (Telegram Topics = Slack channels)
         if STATE_FILE.exists():
             saved = json.loads(STATE_FILE.read_text())
             self.done = set(saved.get("done", []))
@@ -80,9 +81,24 @@ class Inbox:
         self.status = "ready"
         self.live = Live(self)
         self.live.attach()  # real-time: Telegram pushes new messages, edits, deletes and reads
+        asyncio.create_task(self.load_all_topics())
         asyncio.create_task(self.refresh_mentions(14))
         if not latest.exists() or time.time() - latest.stat().st_mtime > 6 * 3600:  # live sync covers the rest
             self.start_refresh()
+
+    async def load_topics(self, chat: tg.Chat) -> list[dict]:
+        try:
+            self.topics[chat.id] = await tg.forum_topics(self.client, chat)
+        except Exception as exc:  # noqa: BLE001 - keep the old list
+            print(f"topics failed for {chat.name}: {exc}", file=sys.stderr)
+        return self.topics.get(chat.id, [])
+
+    async def load_all_topics(self) -> None:
+        for c in [c for c in self.chats if c.forum]:
+            await self.load_topics(c)
+
+    def topic(self, chat_id: int, topic_id: int | None) -> dict | None:
+        return next((t for t in self.topics.get(chat_id, []) if t["id"] == topic_id), None)
 
     def chat_by_id(self, chat_id: int) -> tg.Chat | None:
         return next((c for c in self.chats if c.id == chat_id), None)
@@ -180,7 +196,7 @@ def sidebar(rep: dict) -> list[dict]:
         live = inbox.live.tiers.get(c.id)
         if live and not ignored:
             entry = {"tier": live[0], "reasons": live[1]}
-        out.append({k: info[k] for k in ("id", "name", "username", "kind", "muted", "unread_count", "unread_mentions", "photo", "last_ts", "link")}
+        out.append({k: info[k] for k in ("id", "name", "username", "kind", "muted", "unread_count", "unread_mentions", "photo", "last_ts", "link", "forum")}
                    | {"tier": "noise" if ignored else (entry["tier"] if entry else None),
                       "why": "ignored by you" if ignored else ("; ".join(entry["reasons"]) if entry else ""),
                       "ignored": ignored})
@@ -204,7 +220,9 @@ async def state():
         "totals": rep.get("totals"),
         "mentions_open": len(open_mentions),
         "mentions_unread": sum(1 for m in open_mentions if m["unread"]),
-        "chats": sidebar(rep),
+        "chats": (chats := sidebar(rep)),
+        "topics": {str(c["id"]): [{k: t[k] for k in ("id", "title", "unread_count", "unread_mentions", "last_ts", "closed", "pinned", "hidden")}
+                                  for t in inbox.topics.get(c["id"], [])] for c in chats if c.get("forum")},
         "history": manager.history,
     }
 
@@ -231,7 +249,10 @@ async def avatar(peer: int):
 @app.get("/api/search")
 async def search(q: str, chat: int | None = None, days: float | None = None):
     c = inbox.chat_by_id(chat) if chat else None
-    return {"items": await tg.search(inbox.client, inbox.cfg, q, c, days, limit=50)}
+    items = await tg.search(inbox.client, inbox.cfg, q, c, days, limit=50)
+    for m in items:
+        m["topic"] = (inbox.topic(m["chat"]["id"], m.get("topic_id")) or {}).get("title")
+    return {"items": items}
 
 
 @app.post("/api/refresh")
@@ -248,8 +269,8 @@ async def mentions(days: float = 7, refresh: bool = False):
     items = await inbox.get_mentions(days)
     cutoff = time.time() - days * 86400
     return {"days": days, "fetched_at": inbox.mentions_at,
-            "items": [m | {"done": m["key"] in inbox.done} for m in items
-                      if m["ts"] >= cutoff and m["chat"]["id"] not in inbox.ignored]}
+            "items": [m | {"done": m["key"] in inbox.done, "topic": (inbox.topic(m["chat"]["id"], m.get("topic_id")) or {}).get("title")}
+                      for m in items if m["ts"] >= cutoff and m["chat"]["id"] not in inbox.ignored]}
 
 
 @app.post("/api/mentions/{key}/done")
@@ -305,12 +326,24 @@ async def _mark_read(c: tg.Chat) -> None:
 
 
 @app.post("/api/chat/{chat_id}/read")
-async def mark_read(chat_id: int):
-    """Esc in a chat, like Slack: mark it read on Telegram."""
+async def mark_read(chat_id: int, topic: int | None = None):
+    """Esc in a chat, like Slack: mark it read on Telegram (or just one topic of a forum group)."""
     _mark_read_allowed()
     c = inbox.chat_by_id(chat_id)
     if not c:
         raise HTTPException(404, "unknown chat")
+    if topic and c.forum:
+        t = inbox.topic(chat_id, topic)
+        top = t["top_message"] if t else getattr(c.dialog.message, "id", 0)
+        await tg.read_topic(inbox.client, c, topic, top)
+        if t:
+            gone = t["unread_count"]
+            t.update(unread_count=0, unread_mentions=0, read_upto=max(t["read_upto"], top))
+            c.dialog.unread_count = max(0, (c.dialog.unread_count or 0) - gone)
+        for m in inbox.mentions:
+            if m["chat"]["id"] == chat_id and m.get("topic_id") == topic:
+                m["unread"] = False
+        return {"ok": True, "name": c.name}
     await _mark_read(c)
     return {"ok": True, "name": c.name}
 
@@ -407,7 +440,9 @@ async def upload(chat_id: int, request: Request):
     from urllib.parse import unquote
     name = unquote(request.headers.get("x-filename") or "file")[:200] or "file"
     caption = unquote(request.headers.get("x-caption") or "")[:1000]
-    msg = await _telegram(tg.send_upload(inbox.client, inbox.cfg, c, data, name, caption), "send the file")
+    topic = int(request.headers.get("x-topic") or 0)
+    reply_to = topic if c.forum and topic and topic != tg.GENERAL_TOPIC else None
+    msg = await _telegram(tg.send_upload(inbox.client, inbox.cfg, c, data, name, caption, reply_to), "send the file")
     print(f"uploaded {name} ({len(data)} bytes) to {c.name}", file=sys.stderr)
     return {"message": msg}
 
@@ -486,16 +521,26 @@ async def unreads():
 
 
 @app.get("/api/chat/{chat_id}")
-async def chat(chat_id: int, limit: int = 60, around: int | None = None, before: int | None = None):
+async def chat(chat_id: int, limit: int = 60, around: int | None = None, before: int | None = None, topic: int | None = None):
     c = inbox.chat_by_id(chat_id)
     if not c:
         raise HTTPException(404, "unknown chat")
-    win = await tg.chat_window(inbox.client, inbox.cfg, c, limit=min(limit, 200), around=around, before=before)
+    win = await tg.chat_window(inbox.client, inbox.cfg, c, limit=min(limit, 200), around=around, before=before, topic=topic)
+    t = inbox.topic(chat_id, topic) if topic else None
     entry = next((e for e in (inbox.report or {}).get("chats", []) if e["id"] == chat_id), None)
     for m in win["messages"]:
         m["flags"] = triage.message_flags(m, inbox.cfg)
-    return {"chat": c.info(), "tier": entry and entry["tier"], "why": entry and entry["reasons"],
-            "read_upto": getattr(c.dialog.dialog, "read_inbox_max_id", 0), **win}
+    return {"chat": c.info(), "tier": entry and entry["tier"], "why": entry and entry["reasons"], "topic": t,
+            "read_upto": t["read_upto"] if t else getattr(c.dialog.dialog, "read_inbox_max_id", 0), **win}
+
+
+@app.get("/api/chat/{chat_id}/topics")
+async def chat_topics(chat_id: int):
+    """A forum group's topics, fresh from Telegram."""
+    c = inbox.chat_by_id(chat_id)
+    if not c or not c.forum:
+        raise HTTPException(404, "not a group with Topics")
+    return {"topics": await inbox.load_topics(c)}
 
 
 @app.get("/api/events")
@@ -536,9 +581,12 @@ async def sticker_file(doc_id: int, thumb: bool = False):
 async def send_sticker(chat_id: int, request: Request):
     _writes_allowed()
     c = _chat_or_404(chat_id)
-    doc_id = int((await request.json()).get("doc_id"))
+    body = await request.json()
+    doc_id = int(body.get("doc_id"))
+    topic = int(body.get("topic") or 0)
     try:
-        msg = await stickers.send_sticker(inbox.client, inbox.cfg, c, doc_id)
+        msg = await stickers.send_sticker(inbox.client, inbox.cfg, c, doc_id,
+                                          topic if c.forum and topic and topic != tg.GENERAL_TOPIC else None)
     except LookupError as exc:
         raise HTTPException(404, str(exc))
     except Exception as exc:  # noqa: BLE001
@@ -616,6 +664,9 @@ async def send(chat_id: int, request: Request):
     if len(text) > tg.MAX_TEXT:
         raise HTTPException(400, f"message is longer than Telegram's {tg.MAX_TEXT} characters")
     reply_to = body.get("reply_to")
+    topic = body.get("topic")
+    if not reply_to and topic and int(topic) != tg.GENERAL_TOPIC and c.forum:
+        reply_to = int(topic)  # posting "into" a topic is a reply to its first message
     try:
         msg = await tg.send_text(inbox.client, inbox.cfg, c, text, int(reply_to) if reply_to else None)
     except Exception as exc:  # noqa: BLE001 - e.g. no permission to post in a channel

@@ -118,7 +118,7 @@ async function sendSticker(docId) {
   const chatId = currentChat;
   closePicker();
   try {
-    const { message } = await postJson(`/api/chat/${chatId}/sticker`, { doc_id: docId });
+    const { message } = await postJson(`/api/chat/${chatId}/sticker`, { doc_id: docId, topic: currentTopic });
     lastSent = { chatId, msgId: message.id, at: Date.now() };
     if (view === "chat" && currentChat === chatId && !chatMessages.some((m) => m.id === message.id)) {
       chatMessages.push(message);

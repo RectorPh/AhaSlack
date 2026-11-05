@@ -267,7 +267,7 @@ async function uploadFiles(files) {
     toast(`Uploading <b>${esc(f.name)}</b>…`, false, 60000);
     try {
       const r = await fetch(`/api/chat/${chatId}/upload`, { method: "POST", body: await f.arrayBuffer(),
-        headers: { ...GUARD, "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(f.name), "X-Caption": encodeURIComponent(caption) } });
+        headers: { ...GUARD, "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(f.name), "X-Caption": encodeURIComponent(caption), "X-Topic": String(currentTopic || "") } });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
       const { message } = await r.json();
       caption = "";

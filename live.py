@@ -55,6 +55,7 @@ class Live:
         c.add_event_handler(self._guard(self.on_delete), events.MessageDeleted())
         c.add_event_handler(self._guard(self.on_read), events.MessageRead(inbox=True))
         c.add_event_handler(self._guard(self.on_seen), events.MessageRead(inbox=False))
+        c.add_event_handler(self._guard(self.on_topic_read), events.Raw(types.UpdateReadChannelDiscussionInbox))
         asyncio.create_task(self._catch_up())
 
     async def _catch_up(self) -> None:
@@ -107,6 +108,19 @@ class Live:
             if m.mentioned:
                 d.unread_mentions_count = (d.unread_mentions_count or 0) + 1
 
+        topic = None
+        if chat.forum:  # count it on its topic, like a Slack channel
+            topic = self.inbox.topic(chat.id, msg.get("topic_id"))
+            if topic is None:
+                asyncio.create_task(self.inbox.load_topics(chat))  # a brand-new topic
+            else:
+                topic["last_ts"] = m.date.timestamp()
+                topic["top_message"] = max(topic["top_message"], m.id)
+                if not m.out:
+                    topic["unread_count"] += 1
+                    if m.mentioned:
+                        topic["unread_mentions"] += 1
+
         ignored = self._ignored(chat)
         strong = triage.is_strong(msg["flags"])
         if not m.out and not ignored and (chat.kind == "dm" or strong):
@@ -124,14 +138,15 @@ class Live:
                          "photo": tg.photo_id(chat.entity), "kind": chat.kind},
                 "kind": "reply" if target else "mention",
                 "replying_to": (target.message or tg.media_kind(target) or "")[:300] if target else None,
-                "unread": True, "ts": m.date.timestamp(),
+                "unread": True, "ts": m.date.timestamp(), "topic": topic and topic["title"],
             })
 
         # Desktop notification, like Slack's default: DMs and mentions, never your own or ignored chats.
         notify = not m.out and not ignored and (is_mention or (chat.kind == "dm" and not chat.muted))
         tier, reasons = self.tiers.get(chat.id, (None, []))
         self.publish({"type": "message", "chat": chat.info() | {"tier": tier, "why": "; ".join(reasons), "ignored": chat.id in self.inbox.ignored},
-                      "message": msg, "notify": notify, "mention": is_mention})
+                      "message": msg, "notify": notify, "mention": is_mention,
+                      "topic": topic and {k: topic[k] for k in ("id", "title", "unread_count", "unread_mentions", "last_ts")}})
 
     async def on_edit(self, event) -> None:
         chat = await self._chat(event.chat_id)
@@ -161,6 +176,17 @@ class Live:
             if m["chat"]["id"] == chat.id and m["id"] <= (event.max_id or 0):
                 m["unread"] = False
         self.publish({"type": "read", "chat_id": chat.id, "max_id": event.max_id, "unread": d.unread_count})
+
+    async def on_topic_read(self, update) -> None:
+        """You read a topic somewhere else: clear it here too."""
+        chat_id = int(f"-100{update.channel_id}")
+        t = self.inbox.topic(chat_id, update.top_msg_id)
+        if t is None:
+            return
+        t["read_upto"] = max(t["read_upto"], update.read_max_id)
+        if update.read_max_id >= t["top_message"]:
+            t["unread_count"] = t["unread_mentions"] = 0
+        self.publish({"type": "topic_read", "chat_id": chat_id, "topic_id": update.top_msg_id, "unread": t["unread_count"]})
 
     async def on_seen(self, event) -> None:
         """Someone read your messages (Telegram's ✓✓)."""

@@ -17,7 +17,7 @@ function connectLive() {
     let ev;
     try { ev = JSON.parse(e.data); } catch { return; }
     if (ev.type === "hello" || ev.type === "ping") { liveOk = ev.connected !== false; showLiveStatus(); return; }
-    ({ message: onLiveMessage, edit: onLiveEdit, delete: onLiveDelete, read: onLiveRead })[ev.type]?.(ev);
+    ({ message: onLiveMessage, edit: onLiveEdit, delete: onLiveDelete, read: onLiveRead, topic_read: onTopicRead })[ev.type]?.(ev);
   };
 }
 function showLiveStatus() {
@@ -48,9 +48,15 @@ function onLiveMessage(ev) {
   const m = ev.message;
   const chat = ev.chat;
   upsertChat(chat);
+  if (ev.topic && state?.topics?.[String(chat.id)]) {  // count it on its topic
+    const ts = state.topics[String(chat.id)];
+    const t = ts.find((x) => x.id === ev.topic.id);
+    if (t) Object.assign(t, ev.topic); else ts.unshift({ ...ev.topic, closed: false, pinned: false, hidden: false });
+  }
   sidebarSoon();
+  const inView = !currentTopic || m.topic_id === currentTopic;  // a topic view only shows its own messages
   // The open conversation: show it now, like Slack
-  if (view === "chat" && currentChat === chat.id && !chatMeta.hasNewer && !chatMessages.some((x) => x.id === m.id)) {
+  if (view === "chat" && currentChat === chat.id && inView && !chatMeta.hasNewer && !chatMessages.some((x) => x.id === m.id)) {
     const feed = $("#chat-feed");
     const stick = nearBottom(feed);
     const prev = chatMessages[chatMessages.length - 1];
@@ -94,6 +100,11 @@ function onLiveRead(ev) {  // you read it on your phone or Telegram Desktop
   sidebarSoon();
   if (view === "mentions") renderMentions();
 }
+function onTopicRead(ev) {
+  const t = state?.topics?.[String(ev.chat_id)]?.find((x) => x.id === ev.topic_id);
+  if (t) { t.unread_count = ev.unread; if (!ev.unread) t.unread_mentions = 0; }
+  sidebarSoon();
+}
 let unreadsTimer = null;
 function unreadsSoon() { clearTimeout(unreadsTimer); unreadsTimer = setTimeout(() => view === "unreads" && loadUnreads(), 1500); }
 
@@ -110,7 +121,7 @@ function notify(chat, m) {
     body: (m.text || (m.media ? `[${m.media}]` : "")).slice(0, 180),
     tag: `${chat.id}`, silent: false,
   });
-  n.onclick = () => { window.focus(); navigate({ view: "chat", chatId: chat.id, focus: m.id }); n.close(); };
+  n.onclick = () => { window.focus(); navigate({ view: "chat", chatId: chat.id, focus: m.id, topic: m.topic_id || undefined }); n.close(); };
 }
 
 // ---------------------------------------------------------------- reading, like Slack

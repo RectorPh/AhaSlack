@@ -20,8 +20,9 @@ from telethon import TelegramClient, types, utils
 from telethon.sessions import SQLiteSession, StringSession
 from telethon.extensions import markdown as tmd
 from telethon.tl.functions.account import UpdateProfileRequest
-from telethon.tl.functions.messages import (GetDialogFiltersRequest, GetUnreadMentionsRequest,
-                                            MarkDialogUnreadRequest, SendReactionRequest)
+from telethon.tl.functions.messages import (GetDialogFiltersRequest, GetForumTopicsRequest,
+                                            GetUnreadMentionsRequest, MarkDialogUnreadRequest,
+                                            ReadDiscussionRequest, SendReactionRequest)
 from telethon.tl.functions.users import GetFullUserRequest
 
 import triage
@@ -222,6 +223,7 @@ def to_dict(m, entity, tz, text_chars: int, mine_reply_ids: set[int] | frozenset
     return {
         "id": m.id,
         "chat_id": utils.get_peer_id(entity),
+        "topic_id": topic_of(m) if getattr(entity, "forum", False) else None,
         "image": image_info(m),
         "date": m.date.astimezone(tz).strftime("%Y-%m-%d %H:%M"),
         "sender": sender_info(m, entity),
@@ -239,6 +241,17 @@ def to_dict(m, entity, tz, text_chars: int, mine_reply_ids: set[int] | frozenset
                        "mine": r.chosen_order is not None}
                       for r in (getattr(getattr(m, "reactions", None), "results", None) or [])],
     }
+
+
+GENERAL_TOPIC = 1  # a forum group's "General" topic; its messages carry no topic header
+
+
+def topic_of(m) -> int:
+    """The forum topic a message belongs to (Telegram Topics, shown as Slack channels)."""
+    r = m.reply_to
+    if isinstance(r, types.MessageReplyHeader) and r.forum_topic:
+        return r.reply_to_top_id or r.reply_to_msg_id
+    return GENERAL_TOPIC
 
 
 def reply_target(m) -> int | None:
@@ -278,6 +291,7 @@ class Chat:
     date: datetime | None
     entity: object
     dialog: object
+    forum: bool = False
 
     def info(self) -> dict:
         d = self.dialog
@@ -286,7 +300,7 @@ class Chat:
             "muted": self.muted, "archived": self.archived, "pinned": self.pinned,
             "unread_count": d.unread_count, "unread_mentions": d.unread_mentions_count,
             "unread_mark": bool(getattr(d.dialog, "unread_mark", False)),
-            "link": chat_link(self.entity), "photo": photo_id(self.entity),
+            "link": chat_link(self.entity), "photo": photo_id(self.entity), "forum": self.forum,
             "last_ts": self.date.timestamp() if self.date else 0,
         }
 
@@ -301,7 +315,7 @@ async def load_chats(client, include_archived: bool) -> list[Chat]:
         chats.append(Chat(id=d.id, name="Saved Messages" if is_self else (d.name or "?"),
                           username=uname(e), kind=chat_kind(d),
                           muted=is_muted(d, now), archived=bool(d.archived), pinned=bool(d.pinned),
-                          date=d.date, entity=e, dialog=d))
+                          date=d.date, entity=e, dialog=d, forum=bool(getattr(e, "forum", False))))
     return chats
 
 
@@ -477,11 +491,13 @@ async def recent_messages(client, cfg: triage.Config, chat: Chat, limit: int = 4
 
 
 async def chat_window(client, cfg: triage.Config, chat: Chat, *, limit: int = 60,
-                      around: int | None = None, before: int | None = None) -> dict:
+                      around: int | None = None, before: int | None = None, topic: int | None = None) -> dict:
     """A slice of a chat for the web app: the latest messages, the ones around a message
     (to jump to a mention or search hit), or older ones (scrolling up)."""
     tz = ZoneInfo(cfg.timezone)
     e = chat.entity
+    if topic and chat.forum:
+        return await _topic_window(client, cfg, chat, topic, limit=limit, around=around, before=before)
     newer = []
     if around:
         half = max(limit // 2, 10)
@@ -495,6 +511,58 @@ async def chat_window(client, cfg: triage.Config, chat: Chat, *, limit: int = 60
     mine = set(await my_reply_targets(client, e, raw))
     return {"messages": [to_dict(m, e, tz, 4000, mine) for m in raw],
             "has_older": has_older, "has_newer": has_newer}
+
+
+async def _topic_window(client, cfg, chat: Chat, topic: int, *, limit: int, around: int | None, before: int | None) -> dict:
+    """Messages of one forum topic. Named topics are threads (reply_to=topic); General has no
+    thread, so it's read from the whole group and filtered."""
+    tz = ZoneInfo(cfg.timezone)
+    e = chat.entity
+    general = topic == GENERAL_TOPIC
+    scope = {} if general else {"reply_to": topic}
+    keep = (lambda m: topic_of(m) == GENERAL_TOPIC) if general else (lambda m: True)
+    want = limit * (4 if general else 1)  # General shares the group's history with every topic
+    newer = []
+    if around:
+        half = max(limit // 2, 10)
+        older = [m async for m in client.iter_messages(e, limit=want // 2 + 1, offset_id=around + 1, **scope)]
+        newer = [m async for m in client.iter_messages(e, limit=want // 2, min_id=around, reverse=True, **scope)]
+        has_older, has_newer = len(older) > half, len(newer) >= half
+    else:
+        older = [m async for m in client.iter_messages(e, limit=want, offset_id=before or 0, **scope)]
+        has_older, has_newer = len(older) >= want, bool(before)
+    raw = [m for m in [*reversed(older), *newer] if m and not isinstance(m, types.MessageService) and keep(m)]
+    if not around:
+        raw = raw[-limit:]
+    mine = set(await my_reply_targets(client, e, raw))
+    return {"messages": [to_dict(m, e, tz, 4000, mine) for m in raw], "has_older": has_older, "has_newer": has_newer}
+
+
+async def forum_topics(client, chat: Chat) -> list[dict]:
+    """The topics of a forum group, with their own unread and mention counts."""
+    out, offset_date, offset_id, offset_topic = [], None, 0, 0
+    for _ in range(5):  # up to 500 topics
+        r = await client(GetForumTopicsRequest(peer=chat.entity, offset_date=offset_date, offset_id=offset_id,
+                                               offset_topic=offset_topic, limit=100))
+        dates = {m.id: m.date for m in r.messages}
+        batch = [t for t in r.topics if isinstance(t, types.ForumTopic)]
+        for t in batch:
+            last = dates.get(t.top_message) or t.date
+            out.append({"id": t.id, "title": t.title, "unread_count": t.unread_count,
+                        "unread_mentions": t.unread_mentions_count, "read_upto": t.read_inbox_max_id,
+                        "top_message": t.top_message, "last_ts": last.timestamp() if last else 0,
+                        "closed": bool(t.closed), "pinned": bool(t.pinned), "hidden": bool(t.hidden)})
+        if len(r.topics) < 100 or not batch:
+            break
+        tail = batch[-1]
+        offset_topic, offset_id = tail.id, tail.top_message
+        offset_date = dates.get(tail.top_message) or tail.date
+    return out
+
+
+async def read_topic(client, chat: Chat, topic: int, max_id: int) -> None:
+    """Mark one topic read (Esc in a topic, like Slack marking one channel read)."""
+    await client(ReadDiscussionRequest(peer=chat.entity, msg_id=topic, read_max_id=max_id))
 
 
 MAX_TEXT = 4096  # Telegram's limit for one text message
@@ -585,11 +653,12 @@ async def remind(client, cfg: triage.Config, chat: Chat, msg_id: int, minutes: i
     return when
 
 
-async def send_upload(client, cfg: triage.Config, chat: Chat, data: bytes, filename: str, caption: str = "") -> dict:
+async def send_upload(client, cfg: triage.Config, chat: Chat, data: bytes, filename: str, caption: str = "",
+                      reply_to: int | None = None) -> dict:
     import io
     f = io.BytesIO(data)
     f.name = filename
-    msg = await client.send_file(chat.entity, f, caption=caption or None, parse_mode=ComposerMarkdown)
+    msg = await client.send_file(chat.entity, f, caption=caption or None, parse_mode=ComposerMarkdown, reply_to=reply_to)
     return to_dict(msg, chat.entity, ZoneInfo(cfg.timezone), MAX_TEXT)
 
 

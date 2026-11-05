@@ -19,6 +19,9 @@ for you and tells you what needs you, who tagged you and what you can ignore.
   group to **ignore** it, or **star** it into ⭐ Starred.
 - **Slack-style sidebar:** sort by Priority, Recent activity or A→Z, show everything, only
   unreads, or only mentions and DMs. Your Telegram folders work like Slack workspaces.
+- **Telegram Topics as Slack channels:** a group with Topics becomes a collapsible section,
+  and each topic is its own `# channel` with its own unread and mention counts, messages,
+  composer and mark-read. ⌘K, mentions, search and t.me links open the right topic.
 - **Reading like Slack:** "start where I left off and mark read", "start at the newest", or
   "leave unread"; a *New* divider; an unread banner; **⌘J** to the first unread; **Esc** to
   mark a chat read and **⇧Esc** for everything.

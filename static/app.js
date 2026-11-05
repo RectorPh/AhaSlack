@@ -261,6 +261,7 @@ function renderSidebar() {
     if (!list.length) return "";
     const limit = shown[key] ?? 12;
     const items = list.slice(0, limit).map((c) => {
+      if (c.forum && topicsOf(c.id).length) return forumBlock(c);
       const badge = c.kind === "dm" ? c.unread_count : c.unread_mentions;
       const icon = c.kind === "dm" || c.kind === "bot" ? `<span class="avwrap">${chatAv(c)}</span>` : `<span class="sb-ico">${chatGlyph(c)}</span>`;
       return `<button class="sb-item ${c.unread_count ? "unread" : ""} ${c.muted || c.ignored ? "muted" : ""} ${view === "chat" && currentChat === c.id ? "active" : ""}"
@@ -274,6 +275,40 @@ function renderSidebar() {
       <div class="section-body">${items}${more}</div></div>`;
   }).join("");
   $$(".sb-top .sb-item").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+}
+
+// A group with Topics: a collapsible header, then one "# topic" row per topic, like a Slack
+// section of channels. Collapsed, it still lists topics that mention you, as Slack does.
+const forumExpanded = (id) => (uiPrefs.forumOpen || []).includes(id);
+const forumShowAll = new Set();
+function sortTopics(ts) {
+  const mode = uiPrefs.sort || "priority";
+  const score = (t) => (t.unread_mentions ? 4 : 0) + (t.unread_count ? 1 : 0);
+  return [...ts].filter((t) => !t.hidden || t.unread_count).sort((a, b) =>
+    (b.pinned - a.pinned) || (mode === "alpha" ? a.title.localeCompare(b.title, "vi") : mode === "recent" ? b.last_ts - a.last_ts : score(b) - score(a) || b.last_ts - a.last_ts));
+}
+function forumBlock(c) {
+  const open = forumExpanded(c.id);
+  let ts = sortTopics(topicsOf(c.id));
+  if ((uiPrefs.show || "all") === "unreads") ts = ts.filter((t) => t.unread_count || (currentChat === c.id && currentTopic === t.id));
+  if ((uiPrefs.show || "all") === "mentions") ts = ts.filter((t) => t.unread_mentions || (currentChat === c.id && currentTopic === t.id));
+  const shownTs = open ? (forumShowAll.has(c.id) ? ts : ts.slice(0, 10)) : ts.filter((t) => t.unread_mentions || (view === "chat" && currentChat === c.id && currentTopic === t.id));
+  const head = `<button class="sb-item forum-head ${c.unread_count ? "unread" : ""} ${c.muted || c.ignored ? "muted" : ""} ${view === "chat" && currentChat === c.id && !currentTopic ? "active" : ""}"
+      data-forum="${c.id}" title="${esc(c.why || c.name)} · ${topicsOf(c.id).length} topics"><span class="sb-ico caret-mini">${open ? "▾" : "▸"}</span><span class="nm">${esc(c.name)}</span>
+      ${c.unread_mentions ? `<b class="pill">${c.unread_mentions > 99 ? "99+" : c.unread_mentions}</b>` : ""}
+      <span class="more-btn" data-menu="${c.id}" title="More options" role="button">⋯</span></button>`;
+  const rows = shownTs.map((t) => `<button class="sb-item topic-row ${t.unread_count ? "unread" : ""} ${t.closed ? "muted" : ""} ${view === "chat" && currentChat === c.id && currentTopic === t.id ? "active" : ""}"
+      data-chat="${c.id}" data-topic="${t.id}" title="${esc(t.title)} · ${esc(c.name)}"><span class="sb-ico">${t.closed ? "🔒" : "#"}</span><span class="nm">${esc(t.title)}</span>
+      ${t.unread_mentions ? `<b class="pill">${t.unread_mentions}</b>` : ""}</button>`).join("");
+  const more = open && ts.length > shownTs.length ? `<button class="more" data-forum-more="${c.id}">Show ${ts.length - shownTs.length} more topics</button>` : "";
+  return `<div class="forum">${head}${rows}${more}</div>`;
+}
+function toggleForum(id) {
+  const set = new Set(uiPrefs.forumOpen || []);
+  if (set.has(id)) set.delete(id); else set.add(id);
+  uiPrefs.forumOpen = [...set];
+  saveUi();
+  renderSidebar();
 }
 
 function sidebarMenu(anchor) {
@@ -307,6 +342,10 @@ function toggleStar(chatId) {
 }
 
 $("#sections").addEventListener("click", (e) => {
+  const fm = e.target.closest("[data-forum-more]");
+  if (fm) { forumShowAll.add(Number(fm.dataset.forumMore)); return renderSidebar(); }
+  const fh = e.target.closest("[data-forum]");
+  if (fh && !e.target.closest("[data-menu]")) return toggleForum(Number(fh.dataset.forum));
   const sm = e.target.closest("[data-sidebar-menu]");
   if (sm) { e.stopPropagation(); return sidebarMenu(sm); }
   if (e.target.closest("[data-show-all]")) { e.preventDefault(); uiPrefs.show = "all"; saveUi(); return renderSidebar(); }
@@ -320,7 +359,7 @@ $("#sections").addEventListener("click", (e) => {
   if (!t) return;
   if (t.dataset.toggle) { collapsed[t.dataset.toggle] = !collapsed[t.dataset.toggle]; renderSidebar(); }
   else if (t.dataset.more) { shown[t.dataset.more] += 40; renderSidebar(); }
-  else if (t.dataset.chat) navigate({ view: "chat", chatId: Number(t.dataset.chat) });
+  else if (t.dataset.chat) navigate({ view: "chat", chatId: Number(t.dataset.chat), topic: t.dataset.topic ? Number(t.dataset.topic) : undefined });
 });
 $$(".sb-top .sb-item").forEach((b) => b.addEventListener("click", () => navigate({ view: b.dataset.view })));
 $$(".rail-btn").forEach((b) => b.addEventListener("click", () => {
@@ -344,7 +383,8 @@ function openChatMenu(chatId, x, y) {
   const menu = $("#ctx-menu");
   const isGroup = c.kind !== "dm";
   menu.innerHTML = `<div class="mh">${esc(chatLabel(c))}</div>
-    <button class="mi" data-m="open">Open conversation</button>
+    <button class="mi" data-m="open">${c.forum ? "Open all topics together" : "Open conversation"}</button>
+    ${c.forum ? `<button class="mi" data-m="forum">${forumExpanded(chatId) ? "Collapse topics" : "Show topics"}</button>` : ""}
     <button class="mi" data-m="details">Conversation details<span class="k">${plainCombo(bindingOf(action("details")))}</span></button>
     ${state.mark_read_enabled && c.unread_count ? `<button class="mi" data-m="read">Mark as read<span class="k">Esc</span></button>` : ""}
     <button class="mi" data-m="star">${isStarred(chatId) ? "Remove from Starred" : "⭐ Star conversation"}</button>
@@ -375,6 +415,7 @@ $("#ctx-menu").addEventListener("click", async (e) => {
   closeMenu();
   const m = mi.dataset.m;
   if (m === "open") navigate({ view: "chat", chatId: id });
+  else if (m === "forum") toggleForum(id);
   else if (m === "details") openDetails(id);
   else if (m === "read") markRead(id);
   else if (m === "star") toggleStar(id);
@@ -422,9 +463,17 @@ async function markRead(chatId, quiet = false, { auto = false } = {}) {
   const c = chatById(chatId);
   if (!c || (!c.unread_count && !c.unread_mentions)) return quiet || toast(`${esc(c?.name || "This chat")} is already read`);
   try {
-    await api(`/api/chat/${chatId}/read`, { method: "POST" });
+    const topicQ = chatId === currentChat && currentTopic ? `?topic=${currentTopic}` : "";
+    await api(`/api/chat/${chatId}/read${topicQ}`, { method: "POST" });
   } catch (e) { return toast(`Couldn't mark as read: ${esc(e.message)}`, true); }
-  for (const list of [state.chats, allChats]) { const x = list.find((y) => y.id === chatId); if (x) x.unread_count = x.unread_mentions = 0; }
+  const tp = chatId === currentChat && currentTopic ? topicById(chatId, currentTopic) : null;
+  for (const list of [state.chats, allChats]) {
+    const x = list.find((y) => y.id === chatId);
+    if (!x) continue;
+    if (tp) { x.unread_count = Math.max(0, x.unread_count - tp.unread_count); x.unread_mentions = Math.max(0, x.unread_mentions - tp.unread_mentions); }
+    else x.unread_count = x.unread_mentions = 0;
+  }
+  if (tp) tp.unread_count = tp.unread_mentions = 0;
   renderSidebar();
   if (currentChat === chatId && view === "chat") {
     $("#ch-topic").textContent = $("#ch-topic").textContent.replace(/\d+ unread/, "all read");
@@ -517,7 +566,7 @@ $("#unreads-feed").addEventListener("click", async (e) => {
 
 // ================================================================== navigation + history (Cmd+[ / Cmd+])
 const nav = { stack: [], index: -1 };
-function sameEntry(a, b) { return a && b && a.view === b.view && a.chatId === b.chatId && a.focus === b.focus && a.q === b.q && a.scope === b.scope; }
+function sameEntry(a, b) { return a && b && a.view === b.view && a.chatId === b.chatId && a.topic === b.topic && a.focus === b.focus && a.q === b.q && a.scope === b.scope; }
 function navigate(entry, push = true) {
   if (push && !sameEntry(nav.stack[nav.index], entry)) {
     nav.stack = nav.stack.slice(0, nav.index + 1);
@@ -526,7 +575,7 @@ function navigate(entry, push = true) {
   }
   $("#nav-back").disabled = nav.index <= 0;
   $("#nav-fwd").disabled = nav.index >= nav.stack.length - 1;
-  if (entry.view === "chat") openChat(entry.chatId, { focus: entry.focus });
+  if (entry.view === "chat") openChat(entry.chatId, { focus: entry.focus, topic: entry.topic });
   else if (entry.view === "search") runSearch(entry.q, entry.scope);
   else { setView(entry.view); if (entry.view === "mentions") loadMentions(); if (entry.view === "unreads") loadUnreads(); }
 }
@@ -741,7 +790,7 @@ function sendMessage(host, chatId, text, replyTo) {
       $("button", el)?.setAttribute("disabled", "");
       $(".lbl", el).textContent = "Sending…";
       try {
-        resolve((await postJson(`/api/chat/${chatId}/send`, { text, reply_to: replyTo || null })).message);
+        resolve((await postJson(`/api/chat/${chatId}/send`, { text, reply_to: replyTo || null, topic: chatId === currentChat ? currentTopic : null })).message);
       } catch (e) {
         reject(e);
       } finally {
@@ -828,7 +877,7 @@ function parseTgLink(href) {
   if (p[0] === "c" && /^\d+$/.test(p[1] || "")) {
     const chatId = Number("-100" + p[1]);
     const msg = Number(p[p.length - 1]);
-    return { chatId, focus: p.length >= 3 && Number.isFinite(msg) ? msg : undefined };
+    return { chatId, focus: p.length >= 3 && Number.isFinite(msg) ? msg : undefined, topic: p.length >= 4 ? Number(p[2]) : undefined };
   }
   if (p[0] && !["joinchat", "+", "addstickers", "share", "proxy"].includes(p[0]) && !p[0].startsWith("+")) {
     const c = allChats.find((x) => x.username && x.username.toLowerCase() === p[0].toLowerCase());
@@ -844,20 +893,27 @@ document.addEventListener("click", (e) => {
   const t = parseTgLink(a.href);
   if (!t || !chatById(t.chatId)) return;  // not one of your chats: let Telegram open it
   e.preventDefault();
-  navigate({ view: "chat", chatId: t.chatId, focus: t.focus });
+  navigate({ view: "chat", chatId: t.chatId, focus: t.focus, topic: t.topic });
 });
 
 // ================================================================== one chat
 let chatMessages = [];
 let chatMeta = { hasOlder: false, hasNewer: false, readUpto: 0, unread: 0, loadingOlder: false };
 
-async function openChat(id, { focus } = {}) {
+let currentTopic = null;  // a forum topic (Telegram Topics shown as Slack channels), or null for the whole chat
+const topicsOf = (chatId) => state?.topics?.[String(chatId)] || [];
+const topicById = (chatId, topicId) => topicsOf(chatId).find((t) => t.id === topicId);
+async function openChat(id, { focus, topic } = {}) {
   currentChat = id;
+  currentTopic = topic || null;
   const c = chatById(id) || { id, name: "Chat", kind: "group" };
+  const t = currentTopic ? topicById(id, currentTopic) : null;
   setView("chat");
   remember(id);
   const icon = c.kind === "dm" || c.kind === "bot" ? chatAv(c, "s24") : `<span class="hash">${chatGlyph(c)}</span>`;
-  header(`${icon}<h1>${esc(c.name)}</h1><span class="topic" id="ch-topic"></span>`,
+  header(currentTopic
+      ? `<span class="hash">#</span><h1>${esc(t?.title || "Topic")}</h1><span class="topic" id="ch-topic"></span>`
+      : `${icon}<h1>${esc(c.name)}</h1><span class="topic" id="ch-topic"></span>`,
     `<button class="btn" data-act="summarize-chat">✦ <span class="lbl">Summarize</span></button>`);
   replyTo = null;
   chatMessages = [];
@@ -872,19 +928,22 @@ async function openChat(id, { focus } = {}) {
   feed.innerHTML = `<div class="loading">Reading from Telegram…</div>`;
   let data;
   try {
-    data = await api(`/api/chat/${id}?limit=60${focus ? `&around=${focus}` : ""}`);
+    data = await api(`/api/chat/${id}?limit=60${focus ? `&around=${focus}` : ""}${currentTopic ? `&topic=${currentTopic}` : ""}`);
   } catch (e) {
     feed.innerHTML = `<div class="empty err">${esc(e.message)}</div>`;
     return;
   }
-  if (currentChat !== id || view !== "chat") return;
+  if (currentChat !== id || view !== "chat" || (currentTopic || null) !== (topic || null)) return;
   const ch = data.chat;
-  $("#ch-topic").textContent = [ch.kind === "dm" ? "Direct message" : ch.kind, ch.unread_count ? `${ch.unread_count} unread` : "all read", ch.muted ? "muted" : ""].filter(Boolean).join(" · ");
+  const unread = currentTopic ? data.topic?.unread_count || 0 : ch.unread_count;
+  $("#ch-topic").textContent = currentTopic
+    ? [`in ${ch.name}`, unread ? `${unread} unread` : "all read", data.topic?.closed ? "closed" : ""].filter(Boolean).join(" · ")
+    : [ch.kind === "dm" ? "Direct message" : ch.forum ? `group · ${topicsOf(id).length} topics` : ch.kind, ch.unread_count ? `${ch.unread_count} unread` : "all read", ch.muted ? "muted" : ""].filter(Boolean).join(" · ");
   if (ch.link && ch.link.startsWith("http")) {
     $("#ch-actions").insertAdjacentHTML("beforeend", `<a class="btn ext" href="${esc(ch.link)}" target="_blank" rel="noopener">↗ <span class="lbl">Open in Telegram</span></a>`);
   }
   chatMessages = data.messages;
-  chatMeta = { hasOlder: data.has_older, hasNewer: data.has_newer, readUpto: data.read_upto, unread: ch.unread_count, loadingOlder: false };
+  chatMeta = { hasOlder: data.has_older, hasNewer: data.has_newer, readUpto: data.read_upto, unread, loadingOlder: false };
   renderChatFeed();
   $("#jump-latest").hidden = !chatMeta.hasNewer;
   const target = focus && $(`.msg[data-id="${focus}"]`, feed);
@@ -932,7 +991,7 @@ async function loadOlder() {
   const loader = $(".older-loader", feed);
   if (loader) loader.textContent = "Loading older messages…";
   try {
-    const data = await api(`/api/chat/${id}?limit=50&before=${chatMessages[0].id}`);
+    const data = await api(`/api/chat/${id}?limit=50&before=${chatMessages[0].id}${currentTopic ? `&topic=${currentTopic}` : ""}`);
     if (currentChat !== id) return;
     const oldHeight = feed.scrollHeight;
     const oldTop = feed.scrollTop;
@@ -947,7 +1006,7 @@ async function loadOlder() {
   }
 }
 $("#chat-feed").addEventListener("scroll", (e) => { if (e.target.scrollTop < 300) loadOlder(); });
-$("#jump-latest").addEventListener("click", () => navigate({ view: "chat", chatId: currentChat }));
+$("#jump-latest").addEventListener("click", () => navigate({ view: "chat", chatId: currentChat, topic: currentTopic || undefined }));
 
 function chatRow(m, prev, cls = "") {
   const flags = m.flags || [];
@@ -995,7 +1054,8 @@ let composeMode = "send";
 let replyTo = null;
 function updateComposer() {
   const c = chatById(currentChat);
-  const name = c ? `${c.kind === "dm" ? "" : "#"}${c.name}` : "this chat";
+  const t = currentTopic ? topicById(currentChat, currentTopic) : null;
+  const name = t ? `#${t.title}` : c ? `${c.kind === "dm" ? "" : "#"}${c.name}` : "this chat";
   if (!state?.sending_enabled) composeMode = "ask";
   $('#compose-mode [data-mode="send"]').hidden = !state?.sending_enabled;
   $$("#compose-mode button").forEach((b) => b.classList.toggle("on", b.dataset.mode === composeMode));
@@ -1146,7 +1206,7 @@ function mentionRow(m) {
     <button data-act="done" class="${m.done ? "on" : ""}">${m.done ? "✓ Done" : "✓ Mark done"}</button>`;
   const tag = `<span class="tag ${m.kind}">${m.kind === "reply" ? "REPLY" : "MENTION"}</span>`;
   return `<div class="act ${m.unread && !m.done ? "unread" : ""} ${m.done ? "is-done" : ""}" data-key="${esc(m.key)}" title="Open in ${esc(m.chat.name)}">
-    <div class="line1">${m.unread && !m.done ? `<span class="dot"></span>` : ""}<span><b>${esc(m.sender.name)}</b> ${verb} in <b>${esc(chatLabel(m.chat))}</b></span><span class="sp"></span><span>${esc(m.date.slice(11))}</span></div>
+    <div class="line1">${m.unread && !m.done ? `<span class="dot"></span>` : ""}<span><b>${esc(m.sender.name)}</b> ${verb} in <b>${m.topic ? `# ${esc(m.topic)}</b> · <b>${esc(m.chat.name)}` : esc(chatLabel(m.chat))}</b></span><span class="sp"></span><span>${esc(m.date.slice(11))}</span></div>
     ${msgRow(m, null, { actions, tag, after: quote })}
     <div class="reply-slot"></div><div class="ctx-slot"></div></div>`;
 }
@@ -1226,7 +1286,7 @@ $("#mention-feed").addEventListener("click", async (e) => {
   } else if (act === "ask") {
     askInPane(`What does ${m.sender.name} want from me here, and what should I do? (mention key ${m.key} in "${m.chat.name}")`, m.chat.name);
   } else {
-    navigate({ view: "chat", chatId, focus: msgId });  // jump to it in its chat
+    navigate({ view: "chat", chatId, focus: msgId, topic: m.topic_id || undefined });  // jump to it in its chat (and topic)
   }
 });
 
@@ -1383,7 +1443,7 @@ $("#search-feed").addEventListener("click", (e) => {
   if (!row || e.target.closest("a") || e.target.closest(".context") || e.target.closest(".att")) return;
   const m = lastSearch.items[Number(row.dataset.i)];
   if (e.target.closest('[data-act="context"]')) return toggleContext(row, m.chat.id, m.id);
-  navigate({ view: "chat", chatId: m.chat.id, focus: m.id });  // jump to it in its chat
+  navigate({ view: "chat", chatId: m.chat.id, focus: m.id, topic: m.topic_id || undefined });  // jump to it in its chat (and topic)
 });
 
 // ================================================================== quick switcher (Cmd+K)
@@ -1424,12 +1484,18 @@ function renderSwitcher() {
     { type: "view", view: "mentions", name: "Mentions & replies", icon: "@" },
   ].filter((s) => !q || score(s.name, q) > 0) : [];
   const chats = q ? matchChats(q, filter, 40) : (recentChats().filter(filter).slice(0, 12).length ? recentChats().filter(filter).slice(0, 12) : allChats.filter(filter).slice(0, 12));
-  swItems = [...specials, ...chats.map((c) => ({ type: "chat", chat: c }))];
+  const topicItems = q && swMode === "all" ? Object.entries(state?.topics || {}).flatMap(([cid, ts]) => {
+    const c = chatById(Number(cid));
+    return c ? ts.filter((t) => score(`${t.title} ${c.name}`, q) > 0).map((t) => ({ type: "topic", chat: c, topic: t, s: score(t.title, q) })) : [];
+  }).sort((a, b) => b.s - a.s).slice(0, 12) : [];
+  swItems = [...specials, ...chats.map((c) => ({ type: "chat", chat: c })), ...topicItems];
   swSel = Math.min(swSel, Math.max(swItems.length - 1, 0));
   const list = $("#switcher-list");
   if (!swItems.length) { list.innerHTML = `<div class="empty" style="padding:24px">No conversation matches “${esc(q)}”.</div>`; return; }
   list.innerHTML = (q ? "" : `<div class="pop-head">Recent</div>`) + swItems.map((it, i) => {
     if (it.type === "view") return `<div class="pop-item" data-i="${i}"><span class="ico">${it.icon}</span><span class="nm">${esc(it.name)}</span></div>`;
+    if (it.type === "topic") return `<div class="pop-item" data-i="${i}"><span class="ico">#</span><span class="nm">${esc(it.topic.title)} <span class="sub">· ${esc(it.chat.name)}</span></span>
+      <span class="sub">${it.topic.unread_count ? `<b class="pill">${it.topic.unread_count > 99 ? "99+" : it.topic.unread_count}</b> ` : ""}${esc(ago(it.topic.last_ts))}</span></div>`;
     const c = it.chat;
     const icon = c.kind === "dm" || c.kind === "bot" ? chatAv(c, "s24") : `<span class="ico">${chatGlyph(c)}</span>`;
     return `<div class="pop-item" data-i="${i}">${icon}<span class="nm">${esc(c.name)}</span>
@@ -1443,7 +1509,7 @@ function chooseSwitcher(i) {
   if (!it) return;
   closeSwitcher();
   if (swMode === "forward") return it.type === "chat" && finishForward(it.chat);
-  navigate(it.type === "view" ? { view: it.view } : { view: "chat", chatId: it.chat.id });
+  navigate(it.type === "view" ? { view: it.view } : { view: "chat", chatId: it.chat.id, topic: it.type === "topic" ? it.topic.id : undefined });
   if (swMode === "compose" && it.type === "chat") {  // ⌘N: land in the message box, ready to type
     composeMode = state.sending_enabled ? "send" : "ask";
     updateComposer();
@@ -1610,10 +1676,11 @@ function stepChat(dir, unreadOnly) {
   let items = $$("#sections .section:not(.collapsed) .sb-item[data-chat]");
   if (unreadOnly) items = items.filter((b) => b.classList.contains("unread") || Number(b.dataset.chat) === currentChat);
   if (!items.length) return;
+  const keys = items.map((b) => `${b.dataset.chat}:${b.dataset.topic || ""}`);
+  const i = view === "chat" ? keys.indexOf(`${currentChat}:${currentTopic || ""}`) : -1;
+  const next = i < 0 ? (dir > 0 ? 0 : keys.length - 1) : (i + dir + keys.length) % keys.length;
   const ids = items.map((b) => Number(b.dataset.chat));
-  const i = view === "chat" ? ids.indexOf(currentChat) : -1;
-  const next = i < 0 ? (dir > 0 ? 0 : ids.length - 1) : (i + dir + ids.length) % ids.length;
-  navigate({ view: "chat", chatId: ids[next] });
+  navigate({ view: "chat", chatId: ids[next], topic: items[next].dataset.topic ? Number(items[next].dataset.topic) : undefined });
   $(`#sections .sb-item[data-chat="${ids[next]}"]`)?.scrollIntoView({ block: "nearest" });
 }
 function focusComposer() {

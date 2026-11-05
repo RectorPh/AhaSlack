@@ -516,3 +516,10 @@ body.electron .topbar button, body.electron .topbar input, body.electron .topbar
 body.electron .calm-toggle { -webkit-app-region: no-drag; }
 body.electron.calm .ch-head { padding-left: 84px; -webkit-app-region: drag; }
 body.electron.calm .ch-head button, body.electron.calm .ch-head a { -webkit-app-region: no-drag; }
+
+/* ---------------------------------------------------------------- Telegram Topics as Slack channels */
+.forum { margin: 1px 0; }
+.forum-head .caret-mini { font-size: 11px; }
+.sb-item.topic-row { padding-left: 34px; height: 26px; font-size: 14.5px; }
+.sb-item.topic-row .sb-ico { width: 14px; }
+.forum .more { padding-left: 52px; }

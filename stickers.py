@@ -95,11 +95,11 @@ def data_is_webp(path: Path) -> bool:
     return head[:4] == b"RIFF" and head[8:12] == b"WEBP"
 
 
-async def send_sticker(client, cfg, chat: tg.Chat, doc_id: int) -> dict:
+async def send_sticker(client, cfg, chat: tg.Chat, doc_id: int, reply_to: int | None = None) -> dict:
     doc = DOCS.get(doc_id)
     if doc is None:
         raise LookupError("unknown sticker; open the sticker picker again")
-    msg = await client.send_file(chat.entity, doc)
+    msg = await client.send_file(chat.entity, doc, reply_to=reply_to)
     return tg.to_dict(msg, chat.entity, tg.ZoneInfo(cfg.timezone), tg.MAX_TEXT)
 
 
