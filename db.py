@@ -30,6 +30,23 @@ CREATE INDEX IF NOT EXISTS mentions_ts ON mentions(ts DESC);
 CREATE INDEX IF NOT EXISTS mentions_unread ON mentions(read, ts DESC);
 CREATE INDEX IF NOT EXISTS mentions_chat ON mentions(chat_id, msg_id);
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
+
+-- Threads you're in (Slack's Threads view): you replied in it, or someone replied to you.
+CREATE TABLE IF NOT EXISTS threads (
+    key      TEXT PRIMARY KEY,            -- "chat_id:root_id"
+    chat_id  INTEGER NOT NULL,
+    root_id  INTEGER NOT NULL,
+    topic_id INTEGER,
+    root     TEXT,                        -- the root message (JSON), filled in lazily
+    last     TEXT,                        -- the latest reply (JSON)
+    last_ts  REAL NOT NULL,
+    replies  INTEGER NOT NULL DEFAULT 0,  -- replies seen by the app
+    unread   INTEGER NOT NULL DEFAULT 0,  -- new replies since you last opened it
+    mine     INTEGER NOT NULL DEFAULT 0   -- you replied in it
+);
+CREATE INDEX IF NOT EXISTS threads_last ON threads(last_ts DESC);
+-- Which thread a message belongs to (to follow reply-to-a-reply chains).
+CREATE TABLE IF NOT EXISTS thread_msgs (chat_id INTEGER, msg_id INTEGER, root_id INTEGER, PRIMARY KEY(chat_id, msg_id));
 """
 DROP = ("done", "flags")  # per-request fields that shouldn't be stored
 
@@ -131,3 +148,77 @@ class MentionDB:
             f"SELECT data, read, read_at FROM mentions WHERE {' AND '.join(where)} ORDER BY ts DESC LIMIT ?", [*args, limit + 1]).fetchall()
         items = [json.loads(r["data"]) | {"unread": not r["read"], "read_at": r["read_at"]} for r in rows[:limit]]
         return items, len(rows) > limit
+
+    # ------------------------------------------------------------- threads
+    def thread_root(self, chat_id: int, msg_id: int) -> int:
+        """The thread a message id belongs to, if the app has seen it in one (else itself)."""
+        row = self.conn.execute("SELECT root_id FROM thread_msgs WHERE chat_id = ? AND msg_id = ?", (chat_id, msg_id)).fetchone()
+        return row["root_id"] if row else msg_id
+
+    def thread_has(self, chat_id: int, msg_id: int) -> bool:
+        return self.conn.execute("SELECT 1 FROM thread_msgs WHERE chat_id = ? AND msg_id = ?", (chat_id, msg_id)).fetchone() is not None
+
+    def thread_get(self, chat_id: int, root_id: int) -> dict | None:
+        row = self.conn.execute("SELECT * FROM threads WHERE key = ?", (f"{chat_id}:{root_id}",)).fetchone()
+        return dict(row) if row else None
+
+    def thread_touch(self, chat_id: int, root_id: int, *, reply: dict | None = None, root: dict | None = None,
+                     unread: bool = False, mine: bool = False, topic_id: int | None = None, ts: float | None = None) -> None:
+        """Record activity in a thread you're in: a new reply (yours or someone's), or its root."""
+        key = f"{chat_id}:{root_id}"
+        ts = ts or (reply or {}).get("ts") or time.time()
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO threads(key, chat_id, root_id, topic_id, root, last, last_ts, replies, unread, mine)
+                   VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(key) DO UPDATE SET
+                     root = COALESCE(excluded.root, threads.root),
+                     topic_id = COALESCE(excluded.topic_id, threads.topic_id),
+                     last = CASE WHEN excluded.last_ts >= threads.last_ts AND excluded.last IS NOT NULL THEN excluded.last ELSE threads.last END,
+                     last_ts = MAX(threads.last_ts, excluded.last_ts),
+                     replies = threads.replies + excluded.replies,
+                     unread = threads.unread + excluded.unread,
+                     mine = MAX(threads.mine, excluded.mine)""",
+                (key, chat_id, root_id, topic_id, _j(root), _j(reply), ts, 1 if reply else 0,
+                 1 if unread else 0, 1 if mine else 0))
+            if reply:
+                self.conn.execute("INSERT OR REPLACE INTO thread_msgs VALUES(?, ?, ?)", (chat_id, reply["id"], root_id))
+            self.conn.execute("INSERT OR IGNORE INTO thread_msgs VALUES(?, ?, ?)", (chat_id, root_id, root_id))
+
+    def thread_set_root(self, chat_id: int, root_id: int, root: dict) -> None:
+        with self.conn:
+            self.conn.execute("UPDATE threads SET root = ? WHERE key = ?", (_j(root), f"{chat_id}:{root_id}"))
+
+    def thread_read(self, chat_id: int, root_id: int) -> bool:
+        with self.conn:
+            cur = self.conn.execute("UPDATE threads SET unread = 0 WHERE key = ? AND unread > 0", (f"{chat_id}:{root_id}",))
+        return cur.rowcount > 0
+
+    def thread_unread_count(self, exclude_chats: set[int] = frozenset()) -> int:
+        rows = self.conn.execute("SELECT chat_id FROM threads WHERE unread > 0")
+        return sum(1 for r in rows if r["chat_id"] not in exclude_chats)
+
+    def thread_list(self, *, limit: int = 50, before: float | None = None, unread_only: bool = False,
+                    exclude_chats: set[int] = frozenset()) -> tuple[list[dict], bool]:
+        where, args = ["1=1"], []
+        if before:
+            where.append("last_ts < ?")
+            args.append(before)
+        if unread_only:
+            where.append("unread > 0")
+        if exclude_chats:
+            where.append(f"chat_id NOT IN ({','.join('?' * len(exclude_chats))})")
+            args += list(exclude_chats)
+        rows = self.conn.execute(f"SELECT * FROM threads WHERE {' AND '.join(where)} ORDER BY last_ts DESC LIMIT ?",
+                                 [*args, limit + 1]).fetchall()
+        out = []
+        for r in rows[:limit]:
+            d = dict(r)
+            d["root"] = json.loads(d["root"]) if d["root"] else None
+            d["last"] = json.loads(d["last"]) if d["last"] else None
+            out.append(d)
+        return out, len(rows) > limit
+
+
+def _j(v) -> str | None:
+    return None if v is None else json.dumps({k: x for k, x in v.items() if k not in DROP}, ensure_ascii=False, default=str)

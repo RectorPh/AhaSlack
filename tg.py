@@ -232,6 +232,8 @@ def to_dict(m, entity, tz, text_chars: int, mine_reply_ids: set[int] | frozenset
         "mentioned": bool(m.mentioned),
         "reply_to_me": m.id in mine_reply_ids,
         "reply_to": reply_target(m),
+        "thread_top": thread_top(m),
+        "reply_count": reply_count(m),
         "media": media_kind(m),
         "forwarded": bool(m.fwd_from),
         "link": msg_link(entity, m.id),
@@ -263,6 +265,72 @@ def reply_target(m) -> int | None:
     if r.forum_topic and not r.reply_to_top_id:  # just posted inside a topic, not a reply
         return None
     return r.reply_to_msg_id
+
+
+def thread_top(m) -> int | None:
+    """Telegram's own thread root for a reply in a supergroup (reply_to_top_id), else the message
+    it replies to. In forum topics the top is the topic, so the app follows reply_to instead."""
+    r = m.reply_to
+    if not isinstance(r, types.MessageReplyHeader) or not r.reply_to_msg_id or r.reply_to_peer_id:
+        return None
+    if r.forum_topic:
+        return reply_target(m)
+    return r.reply_to_top_id or r.reply_to_msg_id
+
+
+def reply_count(m) -> int:
+    """How many replies Telegram counts under this message (supergroups), 0 if unknown."""
+    rp = getattr(m, "replies", None)
+    return int(rp.replies or 0) if rp and not rp.comments else 0
+
+
+async def thread(client, cfg: triage.Config, chat: Chat, msg_id: int, topic: int | None = None) -> dict:
+    """A Slack-style thread for any message in it: climb the reply chain to the root, then collect
+    every reply under it (Telegram's own thread in supergroups, else by following reply chains)."""
+    tz = ZoneInfo(cfg.timezone)
+    e = chat.entity
+    m = await client.get_messages(e, ids=msg_id)
+    if not m:
+        raise LookupError("message not found")
+    root, seen = m, {m.id}
+    while True:
+        r = root.reply_to
+        if not isinstance(r, types.MessageReplyHeader) or not r.reply_to_msg_id or r.reply_to_peer_id:
+            break
+        if r.forum_topic and not r.reply_to_top_id:
+            break  # a post in a topic, not a reply
+        up = r.reply_to_msg_id if r.forum_topic else (r.reply_to_top_id or r.reply_to_msg_id)
+        if chat.forum and up == topic_of(root):
+            break
+        if up in seen or len(seen) > 40:
+            break
+        seen.add(up)
+        p = await client.get_messages(e, ids=up)
+        if not p or isinstance(p, types.MessageService):
+            break
+        root = p
+    replies = None
+    megagroup = isinstance(e, types.Channel) and e.megagroup and not chat.forum
+    if megagroup:
+        try:
+            replies = [x async for x in client.iter_messages(e, reply_to=root.id, limit=300)]
+        except Exception:  # noqa: BLE001 - fall back to following reply chains
+            replies = None
+    complete = replies is not None
+    if replies is None:
+        scope = {}
+        if chat.forum and topic_of(root) != GENERAL_TOPIC:
+            scope = {"reply_to": topic_of(root)}
+        later = [x async for x in client.iter_messages(e, limit=1500, min_id=root.id, **scope)]
+        ids, replies = {root.id}, []
+        for x in sorted(later, key=lambda x: x.id):
+            if reply_target(x) in ids:
+                ids.add(x.id)
+                replies.append(x)
+    replies = sorted((x for x in replies if not isinstance(x, types.MessageService)), key=lambda x: x.id)
+    mine = set(await my_reply_targets(client, e, replies))
+    return {"root": to_dict(root, e, tz, 4000), "replies": [to_dict(x, e, tz, 4000, mine) for x in replies],
+            "complete": complete}
 
 
 async def my_reply_targets(client, entity, msgs) -> dict[int, object]:

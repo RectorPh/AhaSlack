@@ -105,6 +105,39 @@ class Inbox:
     def chat_by_id(self, chat_id: int) -> tg.Chat | None:
         return next((c for c in self.chats if c.id == chat_id), None)
 
+    # ------------------------------------------------------------- threads you're in
+    def thread_of(self, chat_id: int, m: dict) -> int | None:
+        """Rule 1 (reply chains): the root of the thread a message replies into."""
+        cand = m.get("thread_top") or m.get("reply_to")
+        return self.db.thread_root(chat_id, cand) if cand else None
+
+    def track_thread(self, chat: tg.Chat, m: dict, *, root: int | None = None, unread: bool | None = None) -> dict | None:
+        """Note a reply in a thread you're in (you replied in it, or it replies to you)."""
+        root = root or self.thread_of(chat.id, m)
+        if not root or root == m["id"] or self.db.thread_has(chat.id, m["id"]):
+            return None
+        known = self.db.thread_get(chat.id, root)
+        to_me = m.get("reply_to_me") or "reply_to_me" in (m.get("flags") or [])
+        if not (known or m["out"] or to_me):
+            return None
+        if unread is None:
+            unread = not m["out"] and chat.id not in self.ignored
+        self.db.thread_touch(chat.id, root, reply=m, unread=unread, mine=m["out"], topic_id=m.get("topic_id"), ts=m.get("ts"))
+        if not (known and known.get("root")):
+            asyncio.create_task(self.fill_thread_roots(chat, [root]))
+        return {"key": f"{chat.id}:{root}", "root_id": root, "unread": self.db.thread_unread_count(self.ignored)}
+
+    async def fill_thread_roots(self, chat: tg.Chat, roots: list[int]) -> None:
+        try:
+            got = await self.client.get_messages(chat.entity, ids=roots)
+        except Exception as exc:  # noqa: BLE001 - shown without its root until next time
+            print(f"thread roots in {chat.name}: {exc}", file=sys.stderr)
+            return
+        tz = tg.ZoneInfo(self.cfg.timezone)
+        for r in got:
+            if r is not None:
+                self.db.thread_set_root(chat.id, r.id, tg.to_dict(r, chat.entity, tz, 1500))
+
     def save_state(self) -> None:
         STATE_FILE.write_text(json.dumps({"done": sorted(self.done), "shortcuts": self.shortcuts,
                                           "ignored": sorted(self.ignored), "ui": self.ui}))
@@ -119,6 +152,10 @@ class Inbox:
                 m["topic"] = (self.topic(m["chat"]["id"], m.get("topic_id")) or {}).get("title")
             # into the Activity database; anything you marked done before counts as read
             self.db.upsert(self.mentions, read_keys=self.done)
+            for m in sorted(self.mentions, key=lambda x: x["ts"]):  # replies to you start threads you're in
+                c = self.chat_by_id(m["chat"]["id"])
+                if c and m.get("kind") == "reply":
+                    self.track_thread(c, m | {"reply_to_me": True}, unread=m["unread"] and m["key"] not in self.done)
             if days >= 30:
                 self.db.set_meta("backfilled", time.time())
 
@@ -229,6 +266,7 @@ async def state():
         "snapshot_at": rep.get("generated_at"),
         "totals": rep.get("totals"),
         "mentions_unread": inbox.db.unread_count(inbox.ignored),
+        "threads_unread": inbox.db.thread_unread_count(inbox.ignored),
         "chats": (chats := sidebar(rep)),
         "topics": {str(c["id"]): [{k: t[k] for k in ("id", "title", "unread_count", "unread_mentions", "last_ts", "closed", "pinned", "hidden")}
                                   for t in inbox.topics.get(c["id"], [])] for c in chats if c.get("forum")},
@@ -723,7 +761,59 @@ async def send(chat_id: int, request: Request):
     except Exception as exc:  # noqa: BLE001 - e.g. no permission to post in a channel
         raise HTTPException(400, f"Telegram refused: {exc}")
     print(f"sent message {msg['id']} to {c.name}", file=sys.stderr)
+    root = body.get("thread_root")
+    if reply_to and (not c.forum or int(reply_to) != int(topic or 0)):  # a reply joins its thread
+        inbox.track_thread(c, msg | {"ts": time.time()}, root=int(root) if root else None)
     return {"message": msg, "chat": c.name}
+
+
+# ---------------------------------------------------------------- threads (Slack-style)
+@app.get("/api/chat/{chat_id}/thread/{msg_id}")
+async def chat_thread(chat_id: int, msg_id: int, topic: int | None = None):
+    """The whole thread a message belongs to: its root and every reply under it."""
+    c = inbox.chat_by_id(chat_id)
+    if not c:
+        raise HTTPException(404, "unknown chat")
+    try:
+        t = await tg.thread(inbox.client, inbox.cfg, c, msg_id, topic)
+    except LookupError:
+        raise HTTPException(404, "That message is no longer available")
+    for m in [t["root"], *t["replies"]]:
+        m["flags"] = triage.message_flags(m, inbox.cfg)
+    known = inbox.db.thread_get(chat_id, t["root"]["id"])
+    return t | {"following": bool(known), "unread": (known or {}).get("unread", 0)}
+
+
+@app.get("/api/threads")
+async def threads(limit: int = 30, before: float | None = None, unread: bool = False):
+    """Slack's Threads view: threads you're in, latest activity first."""
+    items, more = inbox.db.thread_list(limit=min(limit, 100), before=before, unread_only=unread, exclude_chats=inbox.ignored)
+    missing: dict[int, list[int]] = {}
+    for t in items:
+        if not t["root"]:
+            missing.setdefault(t["chat_id"], []).append(t["root_id"])
+    for chat_id, roots in missing.items():
+        c = inbox.chat_by_id(chat_id)
+        if c:
+            await inbox.fill_thread_roots(c, roots)
+    if missing:
+        items, more = inbox.db.thread_list(limit=min(limit, 100), before=before, unread_only=unread, exclude_chats=inbox.ignored)
+    out = []
+    for t in items:
+        c = inbox.chat_by_id(t["chat_id"])
+        if not c:
+            continue
+        topic = inbox.topic(c.id, t["topic_id"]) if c.forum and t["topic_id"] else None
+        out.append(t | {"chat": c.info(), "topic": topic and topic["title"]})
+    return {"items": out, "has_more": more, "unread": inbox.db.thread_unread_count(inbox.ignored)}
+
+
+@app.post("/api/threads/read")
+async def threads_read(request: Request):
+    """You opened a thread: its new replies are seen (in the app only; Telegram is untouched)."""
+    body = await request.json()
+    inbox.db.thread_read(int(body["chat_id"]), int(body["root_id"]))
+    return {"ok": True, "unread": inbox.db.thread_unread_count(inbox.ignored)}
 
 
 @app.get("/api/context/{chat_id}/{msg_id}")

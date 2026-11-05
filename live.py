@@ -129,6 +129,8 @@ class Live:
                 f, f"says '{f.split(':', 1)[-1]}'") for f in msg["flags"] if f.split(":")[0] in triage.STRONG_FLAGS]
             self.tiers[chat.id] = ("must", reasons or ["new message"])
 
+        thread = self.inbox.track_thread(chat, msg | {"ts": m.date.timestamp()})  # threads you're in
+
         is_mention = chat.kind == "group" and not m.out and ("mention" in msg["flags"] or "reply_to_me" in msg["flags"])
         if is_mention and not ignored:
             target = mine.get(m.id)
@@ -147,7 +149,7 @@ class Live:
         notify = not m.out and not ignored and (is_mention or (chat.kind == "dm" and not chat.muted))
         tier, reasons = self.tiers.get(chat.id, (None, []))
         self.publish({"type": "message", "chat": chat.info() | {"tier": tier, "why": "; ".join(reasons), "ignored": chat.id in self.inbox.ignored},
-                      "message": msg, "notify": notify, "mention": is_mention,
+                      "message": msg, "notify": notify, "mention": is_mention, "thread": thread,
                       "topic": topic and {k: topic[k] for k in ("id", "title", "unread_count", "unread_mentions", "last_ts")}})
 
     async def on_edit(self, event) -> None:

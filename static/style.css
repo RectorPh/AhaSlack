@@ -528,3 +528,34 @@ body.electron.calm .ch-head button, body.electron.calm .ch-head a { -webkit-app-
 .act-summary { padding: 8px 20px; font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--line); }
 .load-older { display: block; margin: 14px auto; border: 1px solid var(--line); background: var(--bg); border-radius: 6px; padding: 6px 14px; cursor: pointer; color: var(--fg); font-size: 13.5px; }
 .load-older:hover { background: var(--hover); }
+
+/* ---------------------------------------------------------------- Threads (Slack-style) */
+.thread-bar { display: flex; align-items: center; gap: 6px; margin: 4px 0 2px; padding: 4px 8px 4px 4px; border: 1px solid transparent; border-radius: 6px; background: none; cursor: pointer; font: inherit; font-size: 13px; color: var(--muted); max-width: 100%; text-align: left; }
+.thread-bar .av { margin: 0; }
+.thread-bar b { color: var(--link); font-weight: 700; }
+.thread-bar .tb-view { display: none; margin-left: auto; color: var(--muted); padding-left: 12px; }
+.thread-bar:hover { border-color: var(--line); background: var(--bg); }
+.thread-bar:hover .tb-view { display: inline; }
+.thread-bar:hover .tb-last { display: none; }
+.tb-new { background: var(--link); color: #fff; font-size: 11px; font-weight: 800; border-radius: 9px; padding: 1px 7px; }
+.thread-stub .stub-note { color: var(--muted); font-size: 13px; }
+.thread-stub .stub-text { color: var(--muted); }
+.tag.auto { background: var(--hover); color: var(--muted); border: 1px solid var(--line); }
+.thread-mount { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.thread-mount[hidden] { display: none; }
+.thread-scroll { flex: 1; overflow-y: auto; padding-bottom: 8px; }
+.thread-root { padding-top: 14px; }
+.thread-count { display: flex; align-items: center; gap: 10px; margin: 6px 16px; font-size: 13px; color: var(--muted); }
+.thread-count::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+.pane-note { margin: 0 16px 16px; font-size: 13px; color: var(--muted); }
+.thread-card { margin: 12px 20px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 0 8px; }
+.thread-card.unread { border-color: var(--link); }
+.thread-card .msg { padding-left: 14px; padding-right: 14px; }
+.tc-head { display: flex; align-items: center; gap: 8px; padding: 8px 14px 2px; font-size: 13.5px; }
+.tc-head .sp { flex: 1; }
+.tc-head .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--link); }
+.tc-mid { padding: 2px 14px 0 58px; font-size: 12.5px; color: var(--muted); }
+.thread-last { opacity: .95; }
+.tc-foot { padding: 4px 14px 0 58px; }
+.thread-noroot { padding: 8px 14px; }
+.mount[hidden] { display: none; }

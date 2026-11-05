@@ -25,8 +25,16 @@ for you and tells you what needs you, who tagged you and what you can ignore.
 - **Reading like Slack:** "start where I left off and mark read", "start at the newest", or
   "leave unread"; a *New* divider; an unread banner; **⌘J** to the first unread; **Esc** to
   mark a chat read and **⇧Esc** for everything.
-- **Mentions & replies (Activity):** everywhere you were tagged or replied to. Click one to
-  jump to it in its chat, reply inline, or mark it done (or **Mark all done**).
+- **Mentions & replies (Activity):** every time you were tagged or replied to, kept in a local
+  database (`inbox.db`) so nothing disappears. A mention counts as read once it has been on
+  screen for a moment, like Slack; **Mark unread**, **Mark all as read**, and the badge always
+  matches the list.
+- **Threads, like Slack:** replies are grouped under the message they answer, with a
+  *N replies* bar in the channel; the thread opens on the right with its own message box (it
+  sends a Telegram reply, so it lands in the thread for everyone). Grouping is rule-based:
+  reply chains, plus someone's quick follow-up right after their own thread reply (marked
+  *AUTO*, and **⇱** moves it back). The **Threads** view lists threads you're in, with new
+  replies. Turn it off in Preferences (⌘,) to see replies inline, Telegram style.
 - **Search** messages, channels and people (**⌘G**, **⌘F** for this chat), and **⌘K** to
   jump anywhere.
 - **Messages:** reply, edit, delete, unsend (⌘Z), forward, pin, react, remind me, upload or

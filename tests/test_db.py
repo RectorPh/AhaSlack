@@ -37,3 +37,20 @@ def test_list_filters_and_pages(tmp_path):
     assert [m["key"] for m in d.list(filter="reply")[0]] == ["1:2"]
     older, _ = d.list(before=items[-1]["ts"])
     assert [m["key"] for m in older] == ["1:3"]
+
+
+def test_threads_you_are_in(tmp_path):
+    d = MentionDB(tmp_path / "t.db")
+    reply = lambda i, out=False: {"id": i, "ts": 1000 + i, "out": out, "text": f"r{i}"}
+    d.thread_touch(1, 10, reply=reply(11, out=True), mine=True)        # you reply in thread 10
+    d.thread_touch(1, 10, reply=reply(12), unread=True)                # someone answers
+    d.thread_touch(1, 10, reply=reply(13), unread=True)
+    assert d.thread_root(1, 12) == 10 and d.thread_root(1, 99) == 99  # reply chains resolve to the root
+    assert d.thread_has(1, 13) and not d.thread_has(1, 14)
+    assert d.thread_unread_count() == 1
+    [t], more = d.thread_list()
+    assert not more and t["replies"] == 3 and t["unread"] == 2 and t["mine"] == 1 and t["last"]["id"] == 13
+    d.thread_set_root(1, 10, {"id": 10, "text": "root"})
+    assert d.thread_read(1, 10) and d.thread_unread_count() == 0
+    assert d.thread_list()[0][0]["root"]["text"] == "root"
+    assert d.thread_unread_count({1}) == 0

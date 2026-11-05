@@ -191,6 +191,7 @@ async function loadState() {
     : state.status !== "ready" ? `<span class="err">${esc(state.status)}</span>`
     : typeof liveOk !== "undefined" && liveOk ? `<span class="live-dot">●</span> Live` : state.snapshot_at ? `Scanned ${esc(state.snapshot_at.slice(11, 16))}` : "";
   setBadges(state.mentions_unread);
+  setThreadsBadge(state.threads_unread);
   renderSidebar();
   if (!historyRendered) {
     historyRendered = true;
@@ -575,9 +576,9 @@ function navigate(entry, push = true) {
   }
   $("#nav-back").disabled = nav.index <= 0;
   $("#nav-fwd").disabled = nav.index >= nav.stack.length - 1;
-  if (entry.view === "chat") openChat(entry.chatId, { focus: entry.focus, topic: entry.topic });
+  if (entry.view === "chat") openChat(entry.chatId, { focus: entry.focus, topic: entry.topic, thread: entry.thread });
   else if (entry.view === "search") runSearch(entry.q, entry.scope);
-  else { setView(entry.view); if (entry.view === "mentions") loadMentions(); if (entry.view === "unreads") loadUnreads(); }
+  else { setView(entry.view); if (entry.view === "mentions") loadMentions(); if (entry.view === "unreads") loadUnreads(); if (entry.view === "threads") loadThreads(); }
 }
 function goBack() { if (nav.index > 0) { nav.index--; navigate(nav.stack[nav.index], false); } }
 function goForward() { if (nav.index < nav.stack.length - 1) { nav.index++; navigate(nav.stack[nav.index], false); } }
@@ -586,7 +587,7 @@ $("#nav-fwd").addEventListener("click", goForward);
 
 function setView(name) {
   view = name;
-  for (const v of ["manager", "chat", "mentions", "search", "unreads", "more", "files"]) $("#view-" + v).hidden = v !== name;
+  for (const v of ["manager", "chat", "mentions", "search", "unreads", "more", "files", "threads"]) $("#view-" + v).hidden = v !== name;
   $$(".rail-btn").forEach((b) => b.classList.toggle("active",
     b.dataset.rail === (name === "mentions" ? "mentions" : name === "manager" ? "manager" : "home")));
   $("#sidebar").classList.remove("open");
@@ -596,6 +597,9 @@ function setView(name) {
     closePane();
     header(`${botAv("s24")}<h1>Inbox Manager</h1><span class="app-tag">APP</span><span class="topic">Reads your Telegram for you · read-only</span>`,
       `<button class="btn" data-act="new-convo">＋ <span class="lbl">New conversation</span></button>`);
+  } else if (name === "threads") {
+    header(`<span class="hash">🧵</span><h1>Threads</h1><span class="topic">Threads you replied in, and replies to you</span>`,
+      `<button class="btn" data-act="threads-refresh">↻ <span class="lbl">Refresh</span></button>`);
   } else if (name === "mentions") {
     header(`<span class="hash">@</span><h1>Mentions &amp; replies</h1><span class="topic">Click one to jump to it in its chat</span>`,
       `<button class="btn" data-act="done-all">✓ <span class="lbl">Mark all as read</span></button><button class="btn" data-act="summarize-mentions">✦ <span class="lbl">Summarize</span></button><button class="btn" data-act="recheck">↻ <span class="lbl">Re-check</span></button>`);
@@ -616,6 +620,8 @@ $("#ch-actions").addEventListener("click", async (e) => {
     if (busy) return;
     await api("/api/reset", { method: "POST" });
     renderHistory([]);
+  } else if (act === "threads-refresh") {
+    loadThreads();
   } else if (act === "recheck") {
     loadMentions(true);
   } else if (act === "done-all") {
@@ -946,7 +952,7 @@ async function openChat(id, { focus, topic } = {}) {
   chatMeta = { hasOlder: data.has_older, hasNewer: data.has_newer, readUpto: data.read_upto, unread, loadingOlder: false };
   renderChatFeed();
   $("#jump-latest").hidden = !chatMeta.hasNewer;
-  const target = focus && $(`.msg[data-id="${focus}"]`, feed);
+  const target = focus && ($(`.msg[data-id="${focus}"]`, feed) || focusInThread(focus));
   if (pendingJumpUnread) {  // ⌘J landed: show the "New" line, not the last read message
     pendingJumpUnread = false;
     const line = $(".new-line", feed);
@@ -966,8 +972,13 @@ function renderChatFeed() {
   let day = null;
   let marked = false;
   let prev = null;
+  const T = threadsOn() ? buildThreads(chatMessages) : null;  // Slack-style threads (threads.js)
   const html = chatMessages.map((m) => {
     let out = "";
+    const root = T?.rootOf.get(m.id);
+    const th = root != null ? T.threads.get(root) : null;
+    // a reply: shown in its thread; only a thread whose start isn't loaded gets a stub, at its latest reply
+    if (th && (th.root || th.replies[th.replies.length - 1] !== m)) return "";
     const label = dayLabel(m.date);
     if (label !== day) { out += dayPill(label); day = label; prev = null; }
     if (!marked && !m.out && m.id > chatMeta.readUpto && chatMeta.unread) {
@@ -975,8 +986,10 @@ function renderChatFeed() {
       // Only where the unread messages really begin: not at the top of a page that starts mid-unread.
       if (m !== chatMessages[0] || !chatMeta.hasOlder) { out += `<div class="new-line"><span>New</span></div>`; prev = null; }
     }
-    out += chatRow(m, prev);
-    prev = m;
+    if (th) { out += threadStub(th, m); prev = null; return out; }
+    const own = T?.threads.get(m.id);
+    out += chatRow(m, prev, "", own ? threadBar(own) : "");
+    prev = own ? null : m;
     return out;
   }).join("");
   const top = chatMeta.hasOlder ? `<div class="older-loader">${chatMeta.loadingOlder ? "Loading older messages…" : "Scroll up for older messages"}</div>` : "";
@@ -1008,7 +1021,7 @@ async function loadOlder() {
 $("#chat-feed").addEventListener("scroll", (e) => { if (e.target.scrollTop < 300) loadOlder(); });
 $("#jump-latest").addEventListener("click", () => navigate({ view: "chat", chatId: currentChat, topic: currentTopic || undefined }));
 
-function chatRow(m, prev, cls = "") {
+function chatRow(m, prev, cls = "", after = "") {
   const flags = m.flags || [];
   const tag = flags.includes("reply_to_me") ? `<span class="tag reply">REPLY TO YOU</span>`
     : flags.includes("mention") ? `<span class="tag mention">MENTIONS YOU</span>` : "";
@@ -1020,7 +1033,7 @@ function chatRow(m, prev, cls = "") {
   const before = m.reply_to
     ? `<div class="reply-ref" data-jump="${m.reply_to}" title="Jump to the original message">↩ ${target
       ? `<b>${esc(target.out ? "You" : target.sender.name)}</b> ${esc((target.text || target.media || "").slice(0, 90))}` : "a message"}</div>` : "";
-  return msgRow(m, prev, { actions, tag, before, cls });
+  return msgRow(m, prev, { actions, tag, before, cls, after });
 }
 
 $("#chat-feed").addEventListener("click", (e) => {
@@ -1596,7 +1609,7 @@ const ACTIONS = [
   ["Navigate conversations and messages", "browseDMs", "Browse DMs", "Mod+Shift+K", [], "any", () => openSwitcher("dms")],
   ["Navigate conversations and messages", "more", "Open the More view", "Ctrl+0", [], "any", () => openMore()],
   ["Navigate conversations and messages", "activity", "Open the Activity view (Mentions & replies)", "Mod+Shift+M", [], "any", () => navigate({ view: "mentions" })],
-  ["Navigate conversations and messages", "threads", "Open the Threads view (Inbox Manager)", "Mod+Shift+T", ["Mod+Alt+T"], "any", () => navigate({ view: "manager" })],
+  ["Navigate conversations and messages", "threads", "Open the Threads view", "Mod+Shift+T", [], "any", () => navigate({ view: "threads" })],
   ["Navigate conversations and messages", "browseChannels", "Browse channels", "Mod+Shift+L", [], "any", () => openSwitcher("channels")],
   ["Navigate conversations and messages", "details", "Open conversation details", "Mod+Shift+I", [], "any", () => view === "chat" && openDetails(currentChat)],
   ["Navigate conversations and messages", "nextSection", "Move focus to the next section", "F6", [], "any", () => cycleFocus(1)],
@@ -1764,7 +1777,7 @@ function switchTab(dir, index) {
   const next = index != null ? tabs[index] : tabs[(cur + dir + tabs.length) % tabs.length];
   next?.click();
 }
-const FEEDS = { chat: "#chat-feed", manager: "#thread", mentions: "#mention-feed", search: "#search-feed", unreads: "#unreads-feed" };
+const FEEDS = { chat: "#chat-feed", manager: "#thread", mentions: "#mention-feed", threads: "#threads-feed", search: "#search-feed", unreads: "#unreads-feed" };
 function cycleFocus(dir) {
   const composer = view === "chat" ? $("#chat-input") : view === "manager" ? $("#input") : null;
   const regions = [$("#sections .sb-item.active") || $(".sb-top .sb-item.active") || $(".sb-top .sb-item"), $(FEEDS[view]), composer].filter(Boolean);

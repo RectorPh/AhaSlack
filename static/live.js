@@ -62,10 +62,18 @@ function onLiveMessage(ev) {
     const prev = chatMessages[chatMessages.length - 1];
     chatMessages.push(m);
     $(".empty", feed)?.remove();
-    feed.insertAdjacentHTML("beforeend", chatRow(m, prev, m.out ? "" : "just-arrived"));
+    if (threadsOn() && (buildThreads(chatMessages).rootOf.has(m.id) || m.reply_count)) rerenderChat();  // a thread reply: the bar updates
+    else feed.insertAdjacentHTML("beforeend", chatRow(m, prev, m.out ? "" : "just-arrived"));
     if (stick) feed.scrollTop = feed.scrollHeight;
     else if (!m.out) { pendingNew++; showNewPill(); }
     if (!m.out && stick && document.hasFocus() && readsOnView()) scheduleAutoRead(chat.id);
+  }
+  // Threads: the open thread, and the Threads view
+  const inOpen = threadView && threadView.chatId === chat.id && addToThread(m);
+  if (ev.thread) {
+    if (inOpen && document.hasFocus()) markThreadRead(chat.id, ev.thread.root_id);
+    else setThreadsBadge(ev.thread.unread);
+    if (view === "threads") loadThreads();
   }
   // Activity
   if (ev.mention && mentionData) {
@@ -233,6 +241,7 @@ openShortcuts = function () {
       if (t.name === "readMode") uiPrefs.readMode = t.value;
       if (t.name === "notify") { uiPrefs.notify = t.checked; if (t.checked && "Notification" in window) Notification.requestPermission(); }
       if (t.name === "calm") { uiPrefs.calm = t.checked; applyCalm(); }
+      if (t.name === "threads") { uiPrefs.threads = t.checked; if (view === "chat") rerenderChat(); }
       if (t.name === "sort") uiPrefs.sort = t.value;
       if (t.name === "show") uiPrefs.show = t.value;
       saveUi();
@@ -243,6 +252,8 @@ openShortcuts = function () {
   panel.innerHTML = `<div class="sc-group">Mark as read</div><div class="pref-sub">When I view a conversation:</div>
     ${Object.entries(READ_MODES).map(([k, l]) => `<label class="pref"><input type="radio" name="readMode" value="${k}" ${mode === k ? "checked" : ""}> ${esc(l)}</label>`).join("")}
     ${state?.mark_read_enabled ? "" : `<div class="pref-sub err">Marking read on Telegram is off (mark_read_enabled in config.toml), so nothing is marked read yet.</div>`}
+    <div class="sc-group">Threads</div>
+    <label class="pref"><input type="checkbox" name="threads" ${uiPrefs.threads === false ? "" : "checked"}> Group replies into threads, like Slack (replies open on the right instead of in the channel)</label>
     <div class="sc-group">Notifications</div>
     <label class="pref"><input type="checkbox" name="notify" ${uiPrefs.notify === false ? "" : "checked"}> Notify me about direct messages and mentions</label>
     <div class="sc-group">Sidebar</div>

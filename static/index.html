@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="/static/favicon.png">
   <title>AhaSlack</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap">
@@ -52,6 +53,7 @@
       <div class="sb-top">
         <button class="sb-item" data-view="manager"><span class="sb-ico bot">✦</span><span class="nm">Inbox Manager</span></button>
         <button class="sb-item" data-view="unreads"><span class="sb-ico">≡</span><span class="nm">All unreads</span></button>
+        <button class="sb-item" data-view="threads"><span class="sb-ico">🧵</span><span class="nm">Threads</span><b class="pill" id="threads-badge" hidden></b></button>
         <button class="sb-item" data-view="mentions"><span class="sb-ico">@</span><span class="nm">Mentions &amp; replies</span><b class="pill" id="mention-badge" hidden></b></button>
       </div>
       <div id="sections"></div>
@@ -95,6 +97,10 @@
         <div class="feed" id="mention-feed"></div>
       </section>
 
+      <section class="view" id="view-threads" hidden>
+        <div class="feed" id="threads-feed"></div>
+      </section>
+
       <section class="view" id="view-more" hidden>
         <div class="feed" id="more-feed"></div>
       </section>
@@ -123,6 +129,7 @@
         <button class="icon-btn" id="pane-close" title="Close">✕</button>
       </header>
       <div class="mount" id="pane-mount"></div>
+      <div class="mount thread-mount" id="thread-mount" hidden></div>
     </aside>
   </div>
 </div>
@@ -191,5 +198,6 @@
 <script src="/static/slack.js"></script>
 <script src="/static/live.js"></script>
 <script src="/static/picker.js"></script>
+<script src="/static/threads.js"></script>
 </body>
 </html>
