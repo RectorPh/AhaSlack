@@ -793,6 +793,51 @@ async def react(client, chat: Chat, msg_id: int, emoji: str | None) -> None:
     await client(SendReactionRequest(peer=chat.entity, msg_id=msg_id, reaction=reaction))
 
 
+def _reaction_label(r) -> str:
+    return getattr(r, "emoticon", None) or ("★" if isinstance(r, types.ReactionCustomEmoji) else "⭐" if isinstance(r, types.ReactionPaid) else "?")
+
+
+async def reactors(client, chat: Chat, msg_id: int) -> list[dict]:
+    """Who reacted to a message, and with what (Slack: hover a reaction). Telegram shares this in
+    groups and DMs; in some big groups and channels it keeps the list private."""
+    from telethon.tl.functions.messages import GetMessageReactionsListRequest
+    out = []
+    my_id = getattr(await client.get_me(input_peer=True), "user_id", None)
+    try:
+        res = await client(GetMessageReactionsListRequest(peer=chat.entity, id=msg_id, limit=100))
+        users = {u.id: u for u in res.users}
+        for r in res.reactions:
+            u = users.get(getattr(r.peer_id, "user_id", None))
+            if u:
+                out.append(_person(u) | {"emoji": _reaction_label(r.reaction), "me": u.id == my_id})
+        return out
+    except Exception:  # noqa: BLE001 - DMs and small chats: Telegram puts the recent ones on the message
+        pass
+    m = await client.get_messages(chat.entity, ids=msg_id)
+    rs = getattr(m, "reactions", None) if m else None
+    if not rs:
+        return out
+    for r in rs.recent_reactions or []:
+        uid = getattr(r.peer_id, "user_id", None)
+        if uid:
+            try:
+                u = await client.get_entity(uid)
+            except Exception:  # noqa: BLE001
+                continue
+            out.append(_person(u) | {"emoji": _reaction_label(r.reaction), "me": u.id == my_id})
+    if not out and isinstance(chat.entity, types.User):  # a DM without recent_reactions: you and/or them
+        me = await client.get_me()
+        for res in rs.results:
+            mine = res.chosen_order is not None
+            if mine:
+                out.append(_person(me) | {"emoji": _reaction_label(res.reaction), "me": True})
+            if res.count > (1 if mine else 0):
+                out.append(_person(chat.entity) | {"emoji": _reaction_label(res.reaction), "me": False})
+    if not out:
+        raise PermissionError("Telegram keeps the list of who reacted private in this chat")
+    return out
+
+
 async def remind(client, cfg: triage.Config, chat: Chat, msg_id: int, minutes: int) -> datetime:
     """Slack's reminder (M): a scheduled message to your Saved Messages, Telegram's own reminders."""
     m = await client.get_messages(chat.entity, ids=msg_id)

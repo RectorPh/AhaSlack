@@ -639,6 +639,18 @@ async def chat_members(chat_id: int, q: str = "", limit: int = 12):
     return {"members": await tg.members(inbox.client, c, q.strip().lstrip("@"), min(limit, 30), recent)}
 
 
+@app.get("/api/chat/{chat_id}/msg/{msg_id}/reactions")
+async def msg_reactions(chat_id: int, msg_id: int):
+    """Who reacted to this message (right-click a reaction)."""
+    c = inbox.chat_by_id(chat_id)
+    if not c:
+        raise HTTPException(404, "unknown chat")
+    try:
+        return {"people": await tg.reactors(inbox.client, c, msg_id)}
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc))
+
+
 @app.get("/api/chat/{chat_id}/topics")
 async def chat_topics(chat_id: int):
     """A forum group's topics, fresh from Telegram."""

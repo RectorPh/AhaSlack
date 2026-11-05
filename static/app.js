@@ -856,7 +856,7 @@ function msgRow(m, prev, { actions = "", tag = "", cls = "", highlight = "", aft
   const edited = m.edited ? ` <span class="edited">(edited)</span>` : "";
   const text = (m.text || (!img && m.media)) ? `<div class="tg-text">${tgText(m.text, img ? null : m.media, highlight, m.ments)}${edited}</div>` : "";
   const reacts = (m.reactions || []).length ? `<div class="reacts">${m.reactions.map((r) =>
-    `<button class="react-chip ${r.mine ? "mine" : ""}" data-emo="${esc(r.emoji)}" title="${r.mine ? "Remove your reaction" : "React with " + esc(r.emoji)}">${esc(r.emoji)} <b>${r.count}</b></button>`).join("")}</div>` : "";
+    `<button class="react-chip ${r.mine ? "mine" : ""}" data-emo="${esc(r.emoji)}" data-chat="${m.chat_id ?? ""}" data-msg="${m.id}" title="${r.mine ? "Remove your reaction" : "React with " + esc(r.emoji)}">${esc(r.emoji)} <b>${r.count}</b></button>`).join("")}</div>` : "";
   const pin = m.pinned ? `<div class="pin-tag">📌 Pinned</div>` : "";
   const body = `${pin}${before}${text}${img}${reacts}${after}`;
   if (cont) {

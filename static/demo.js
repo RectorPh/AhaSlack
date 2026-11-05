@@ -144,6 +144,13 @@
     if (p === "/api/unreads") return json({ items: CHATS.filter((c) => c.tier === "must").map((c) => ({ chat: c, tier: c.tier, why: c.why, messages: (MSGS[c.id] || []).slice(-2) })) });
     let m;
     if ((m = p.match(/^\/api\/chat\/(-?\d+)\/thread\/(\d+)$/))) return json(threadOf(Number(m[1]), Number(m[2])));
+    if ((m = p.match(/^\/api\/chat\/(-?\d+)\/msg\/(\d+)\/reactions$/))) {
+      const msg = (MSGS[Number(m[1])] || []).find((x) => x.id === Number(m[2]));
+      const pool = [P[203], P[205], P[206], P[207], P[208], P[201], P[204]];
+      const people = [];
+      for (const r of msg?.reactions || []) for (let i = 0; i < r.count; i++) people.push(r.mine && i === 0 ? { ...ME, id: 1, me: true, emoji: r.emoji } : { ...pool[(i + people.length) % pool.length], me: false, emoji: r.emoji });
+      return json({ people });
+    }
     if ((m = p.match(/^\/api\/chat\/(-?\d+)$/))) {
       const id = Number(m[1]), topic = Number(q.get("topic")) || null;
       const c = CHATS.find((x) => x.id === id);
