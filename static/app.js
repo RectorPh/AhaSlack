@@ -313,8 +313,9 @@ function renderSidebar() {
   const groups = { starred: [], must: [], channels: [], dms: [], quiet: [] };
   for (const c of state.chats) {
     if ((typeof inFolder === "function" && !inFolder(c)) || !showChat(c)) continue;
-    groups[isStarred(c.id) ? "starred" : sectionOf(c)].push(c);
-    if (!isStarred(c.id) && dmNeedsYou(c)) groups.must.push(c);  // also in Needs you
+    const pinnedHere = chatInNeedsYou(c.id);
+    groups[isStarred(c.id) ? "starred" : pinnedHere ? "must" : sectionOf(c)].push(c);  // pinned: lives in Needs you
+    if (!isStarred(c.id) && !pinnedHere && dmNeedsYou(c)) groups.must.push(c);  // also in Needs you
   }
   for (const k in groups) sortChats(groups[k]);
   const filterNote = (uiPrefs.show || "all") !== "all" ? `<div class="sb-filter">Showing ${esc(SHOWS[uiPrefs.show].toLowerCase())} · <a href="#" data-show-all>show all</a></div>` : "";
@@ -411,6 +412,19 @@ function toggleNeedsTopic(chatId, topicId) {
   toast(on ? `📌 # ${esc(t?.title || "Topic")} is in Needs you` : `Removed # ${esc(t?.title || "topic")} from Needs you`);
   if (view === "chat" && currentChat === chatId && currentTopic === topicId) updateTopicPinButton();
 }
+// Whole conversations pinned to Needs you (uiPrefs.needsChats: [chatId, ...]).
+const chatInNeedsYou = (chatId) => (uiPrefs.needsChats || []).includes(chatId);
+function toggleNeedsChat(chatId) {
+  const list = new Set(uiPrefs.needsChats || []);
+  const on = !list.has(chatId);
+  if (on) list.add(chatId); else list.delete(chatId);
+  uiPrefs.needsChats = [...list];
+  saveUi();
+  renderSidebar();
+  const c = chatById(chatId);
+  toast(on ? `📌 <b>${esc(c?.name || "Conversation")}</b> is in Needs you` : `Removed <b>${esc(c?.name || "conversation")}</b> from Needs you`);
+  if (view === "chat" && currentChat === chatId) updateTopicPinButton();
+}
 function pinnedTopics() {
   return (uiPrefs.needsTopics || []).map((k) => {
     const [cid, tid] = k.split(":").map(Number);
@@ -428,8 +442,8 @@ function needsTopicRow({ c, t }) {
 // The ☆ in a topic's header: add it to Needs you or take it out.
 function updateTopicPinButton() {
   const b = $("#topic-pin");
-  if (!b || !currentTopic) return;
-  const on = inNeedsYou(currentChat, currentTopic);
+  if (!b) return;
+  const on = currentTopic ? inNeedsYou(currentChat, currentTopic) : chatInNeedsYou(currentChat);
   b.classList.toggle("on", on);
   b.innerHTML = `${on ? "📌" : "☆"} <span class="lbl">${on ? "In Needs you" : "Add to Needs you"}</span>`;
 }
@@ -496,11 +510,12 @@ function openChatMenu(chatId, x, y, topicId = null) {
     ${c.forum ? `<button class="mi" data-m="forum">${forumExpanded(chatId) ? "Collapse topics" : "Show topics"}</button>` : ""}
     <button class="mi" data-m="details">Conversation details<span class="k">${plainCombo(bindingOf(action("details")))}</span></button>
     ${state.mark_read_enabled && c.unread_count ? `<button class="mi" data-m="read">Mark as read<span class="k">Esc</span></button>` : ""}
+    <button class="mi" data-m="needs">${chatInNeedsYou(chatId) ? "Remove from Needs you" : "📌 Add to Needs you"}</button>
     <button class="mi" data-m="star">${isStarred(chatId) ? "Remove from Starred" : "⭐ Star conversation"}</button>
     <button class="mi" data-m="summarize">✦ Summarize with manager</button>
     <div class="sep"></div>
     ${c.ignored ? `<button class="mi" data-m="unignore">Stop ignoring</button>`
-      : `<button class="mi" data-m="ignore">${isGroup ? "Ignore this group (remove from Needs you)" : "Ignore this conversation"}</button>`}
+      : `<button class="mi" data-m="ignore">${isGroup ? "Ignore this group (never in Needs you)" : "Ignore this conversation"}</button>`}
     ${c.link && c.link.startsWith("http") ? `<button class="mi" data-m="tg">Open in Telegram ↗</button>` : ""}`;
   menu.dataset.chat = chatId;
   menu.hidden = false;
@@ -528,6 +543,7 @@ $("#ctx-menu").addEventListener("click", async (e) => {
   else if (m === "details") openDetails(id);
   else if (m === "read") markRead(id);
   else if (m === "star") toggleStar(id);
+  else if (m === "needs") toggleNeedsChat(id);
   else if (m === "topic-open") navigate({ view: "chat", chatId: id, topic: Number($("#ctx-menu").dataset.topic) });
   else if (m === "topic-needs") toggleNeedsTopic(id, Number($("#ctx-menu").dataset.topic));
   else if (m === "summarize") { if (view !== "chat" || currentChat !== id) navigate({ view: "chat", chatId: id }); setTimeout(summarizeChat, 50); }
@@ -731,7 +747,7 @@ $("#ch-actions").addEventListener("click", async (e) => {
     await api("/api/reset", { method: "POST" });
     renderHistory([]);
   } else if (act === "topic-needs") {
-    if (currentTopic) toggleNeedsTopic(currentChat, currentTopic);
+    if (currentTopic) toggleNeedsTopic(currentChat, currentTopic); else toggleNeedsChat(currentChat);
   } else if (act === "threads-read-all") {
     markAllThreadsRead();
   } else if (act === "threads-refresh") {
@@ -1038,7 +1054,7 @@ async function openChat(id, { focus, topic } = {}) {
   header(currentTopic
       ? `<span class="hash">#</span><h1>${esc(t?.title || "Topic")}</h1><span class="topic" id="ch-topic"></span>`
       : `${icon}<h1>${esc(c.name)}</h1><span class="topic" id="ch-topic"></span>`,
-    (currentTopic ? `<button class="btn" id="topic-pin" data-act="topic-needs" title="Show this topic in Needs you">☆ <span class="lbl">Add to Needs you</span></button>` : "") +
+    `<button class="btn" id="topic-pin" data-act="topic-needs" title="Keep this ${currentTopic ? "topic" : "conversation"} in Needs you">☆ <span class="lbl">Add to Needs you</span></button>` +
     `<button class="btn" data-act="summarize-chat">✦ <span class="lbl">Summarize</span></button>`);
   updateTopicPinButton();
   replyTo = null;
@@ -1715,6 +1731,11 @@ function switcherCommands() {
     }
     add("Sound settings", () => openSoundSettings(), { icon: "🔔", keywords: "sound audio volume notification ding knock" });
   }
+  if (view === "chat" && currentChat && !currentTopic) {
+    const c = chatById(currentChat);
+    add(chatInNeedsYou(currentChat) ? `Remove ${c?.name} from Needs you` : `Add ${c?.name} to Needs you`, () => toggleNeedsChat(currentChat), { icon: "📌", keywords: "needs you pin sidebar" });
+  }
+  for (const id of uiPrefs.needsChats || []) { const c = chatById(id); if (c && !(view === "chat" && id === currentChat && !currentTopic)) add(`Remove ${c.name} from Needs you`, () => toggleNeedsChat(id), { icon: "📌", keywords: "needs you unpin" }); }
   if (view === "chat" && currentTopic) {
     const t = topicById(currentChat, currentTopic);
     add(inNeedsYou(currentChat, currentTopic) ? `Remove # ${t?.title} from Needs you` : `Add # ${t?.title} to Needs you`,
