@@ -14,6 +14,17 @@ const THEMES = {
   paper:     { label: "Paper",     side: "#f6f5f2", active: "#1d6fa5", badge: "#d93a63" },
   sand:      { label: "Sand",      side: "#f4ece4", active: "#e8743b", badge: "#d93a63" },
 };
+// Unread badges: the theme's own color, or something calmer. "subtle" blends into the sidebar.
+const BADGES = {
+  theme:    { label: "Theme color" },
+  subtle:   { label: "Subtle" },
+  slate:    { label: "Slate",    color: "#7a8290" },
+  ocean:    { label: "Ocean",    color: "#3f7cac" },
+  sage:     { label: "Sage",     color: "#5b8c74" },
+  sand:     { label: "Sand",     color: "#b8945a" },
+  lavender: { label: "Lavender", color: "#8b7fc4" },
+  red:      { label: "Red",      color: "#d93a63" },
+};
 const MODES = { system: "Sync with your computer", light: "Light", dark: "Dark" };
 
 // ---------------------------------------------------------------- color math
@@ -38,11 +49,22 @@ function themeVars(t, dark) {
     "--chrome-fg": ink,
     "--overlay": lightSide ? "#0000001a" : "#ffffff21",
     "--badge": t.badge,
+    "--badge-fg": "#ffffff",
   };
+}
+// The badge color you picked, applied over the theme.
+function badgeVars(vars, choice) {
+  if (!choice || choice === "theme") return vars;
+  let bg;
+  if (choice === "subtle") bg = mix(vars["--side-bg"], vars["--side-strong"], 0.24);
+  else if (choice.startsWith("#")) bg = choice;
+  else bg = BADGES[choice]?.color || vars["--badge"];
+  const fg = choice === "subtle" ? vars["--side-strong"] : luminance(bg) > 0.5 ? "#1d1c1d" : "#ffffff";
+  return { ...vars, "--badge": bg, "--badge-fg": fg };
 }
 function currentTheme() {
   const t = uiPrefs.theme || {};
-  return { mode: t.mode || "system", name: t.name || "aubergine", custom: t.custom || null };
+  return { mode: t.mode || "system", name: t.name || "aubergine", custom: t.custom || null, badge: t.badge || "theme" };
 }
 const systemDark = matchMedia("(prefers-color-scheme: dark)");
 function applyTheme(t = currentTheme()) {
@@ -50,7 +72,7 @@ function applyTheme(t = currentTheme()) {
   const dark = t.mode === "dark" || (t.mode === "system" && systemDark.matches);
   if (t.mode === "system") delete root.dataset.mode; else root.dataset.mode = t.mode;
   const preset = t.name === "custom" && t.custom ? t.custom : THEMES[t.name] || THEMES.aubergine;
-  const vars = themeVars(preset, dark);
+  const vars = badgeVars(themeVars(preset, dark), t.badge);
   for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v);
   try { localStorage.setItem("ahaslack-theme", JSON.stringify({ mode: t.mode, vars })); } catch { /* fine */ }
 }
@@ -62,8 +84,10 @@ function setTheme(patch) {
 }
 
 // ---------------------------------------------------------------- Preferences > Themes
+const isDark = () => { const m = currentTheme().mode; return m === "dark" || (m === "system" && systemDark.matches); };
 function themeSectionHtml() {
   const t = currentTheme();
+  const preset = t.name === "custom" && t.custom ? t.custom : THEMES[t.name] || THEMES.aubergine;
   const swatch = (k, p) => `<button type="button" class="theme-swatch ${t.name === k ? "on" : ""}" data-theme="${k}" title="${esc(p.label)}">
       <span class="ts-side" style="background:${p.side};color:${luminance(p.side) > 0.45 ? "#1d1c1d" : "#fff"}"><i style="background:${p.active}"></i><i></i><i></i><b style="background:${p.badge}"></b></span><span class="ts-name">${esc(p.label)}</span></button>`;
   const c = t.custom || { side: "#4b1f52", active: "#1d6fa5", badge: "#d93a63" };
@@ -78,11 +102,26 @@ function themeSectionHtml() {
       <label>Sidebar <input type="color" name="tcSide" value="${c.side}"></label>
       <label>Selected item <input type="color" name="tcActive" value="${c.active}"></label>
       <label>Badges <input type="color" name="tcBadge" value="${c.badge}"></label>
+    </div>
+    <div class="sc-group">Unread badges</div>
+    <div class="pref-sub">The color of unread counts in the sidebar and the rail. Pick a calmer one if red pulls at you.</div>
+    <div class="badge-row">${Object.entries(BADGES).map(([k, b]) => {
+      const v = badgeVars(themeVars(preset, isDark()), k);
+      return `<button type="button" class="badge-opt ${t.badge === k ? "on" : ""}" data-badge="${k}" title="${esc(b.label)}">
+        <span class="badge-demo" style="background:${v["--side-bg"]}"><b style="background:${v["--badge"]};color:${v["--badge-fg"]}">2</b></span><span class="ts-name">${esc(b.label)}</span></button>`;
+    }).join("")}
+      <label class="badge-opt ${t.badge.startsWith("#") ? "on" : ""}" title="Any color"><span class="badge-demo"><input type="color" name="badgeColor" value="${t.badge.startsWith("#") ? t.badge : "#7a8290"}"></span><span class="ts-name">Custom</span></label>
     </div></div>`;
 }
 function wireThemeSection(panel) {
   const box = $(".theme-prefs", panel);
   box.addEventListener("click", (e) => {
+    const bd = e.target.closest("[data-badge]");
+    if (bd) {
+      setTheme({ badge: bd.dataset.badge });
+      $$(".badge-opt", box).forEach((b) => b.classList.toggle("on", b === bd));
+      return;
+    }
     const sw = e.target.closest("[data-theme]");
     if (!sw) return;
     const name = sw.dataset.theme;
@@ -92,6 +131,12 @@ function wireThemeSection(panel) {
   });
   box.addEventListener("input", (e) => {
     const t = e.target;
+    if (t.name === "badgeColor") {
+      uiPrefs.theme = { ...currentTheme(), badge: t.value };
+      applyTheme();
+      $$(".badge-opt", box).forEach((b) => b.classList.toggle("on", b.contains(t)));
+      return;
+    }
     if (!t.name?.startsWith("tc")) return;
     const c = { ...(currentTheme().custom || {}), side: $('[name="tcSide"]', box).value, active: $('[name="tcActive"]', box).value, badge: $('[name="tcBadge"]', box).value };
     uiPrefs.theme = { ...currentTheme(), name: "custom", custom: c };
@@ -103,7 +148,7 @@ function wireThemeSection(panel) {
     if (e.target.name === "themeMode") {
       setTheme({ mode: e.target.value });
       $$(".mode-opt", box).forEach((l) => l.classList.toggle("on", l.querySelector("input").checked));
-    } else if (e.target.name?.startsWith("tc")) saveUi();
+    } else if (e.target.name?.startsWith("tc") || e.target.name === "badgeColor") saveUi();
     e.stopPropagation();  // not a reading/sidebar preference
   });
 }

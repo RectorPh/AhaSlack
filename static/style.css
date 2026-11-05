@@ -99,7 +99,7 @@ a:hover { text-decoration: underline; }
 .rail-btn:hover .rail-ico { background: var(--overlay); }
 .rail-btn.active .rail-ico { background: var(--overlay); }
 .rail-lbl { font-size: 11.5px; font-weight: 700; }
-.rail-badge { position: absolute; top: 0; right: 6px; background: var(--badge); color: #fff; font-size: 10.5px; border-radius: 9px; padding: 1px 5px; border: 2px solid var(--chrome); }
+.rail-badge { position: absolute; top: 0; right: 6px; background: var(--badge); color: var(--badge-fg, #fff); font-size: 10.5px; border-radius: 9px; padding: 1px 5px; border: 2px solid var(--chrome); }
 .rail-me { margin-top: auto; }
 .rail-me .av { width: 36px; height: 36px; border-radius: 9px; }
 
@@ -132,7 +132,7 @@ a:hover { text-decoration: underline; }
 .sb-item .avwrap { position: relative; flex: none; display: flex; }
 .sb-item .avwrap .dot { position: absolute; right: -3px; bottom: -3px; width: 9px; height: 9px; border-radius: 50%; background: var(--side-bg); border: 2px solid var(--side-bg); }
 .sb-item .avwrap .dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid var(--side-dim); }
-.pill { background: var(--badge); color: #fff; font-size: 11.5px; font-weight: 700; border-radius: 9px; padding: 0 7px; line-height: 18px; flex: none; }
+.pill { background: var(--badge); color: var(--badge-fg, #fff); font-size: 11.5px; font-weight: 700; border-radius: 9px; padding: 0 7px; line-height: 18px; flex: none; }
 .section { margin-top: 10px; }
 .section-head { display: flex; align-items: center; gap: 4px; width: 100%; height: 28px; background: none; border: 0; color: var(--side-dim); font-size: 15px; padding: 0 10px; cursor: pointer; }
 .section-head:hover { color: var(--side-strong); }
@@ -629,3 +629,11 @@ body.calm .bell { display: none; }
 .bell-menu .sep { border-top: 1px solid var(--line); margin: 5px 0; }
 .sound-grid { display: grid; grid-template-columns: max-content max-content auto; gap: 6px 10px; align-items: center; margin: 4px 0 10px 4px; font-size: 14px; }
 .sound-grid button { justify-self: start; }
+
+/* Preferences > Unread badges */
+.badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 10px; }
+.badge-opt { display: flex; flex-direction: column; align-items: center; gap: 4px; border: 2px solid transparent; border-radius: 10px; background: none; padding: 4px; cursor: pointer; width: 76px; }
+.badge-opt.on { border-color: var(--side-active); }
+.badge-demo { display: grid; place-items: center; width: 100%; height: 34px; border-radius: 7px; box-shadow: inset 0 0 0 1px #0000001a; }
+.badge-demo b { font-size: 11.5px; font-weight: 700; border-radius: 9px; padding: 0 7px; line-height: 18px; }
+.badge-demo input[type="color"] { width: 34px; height: 24px; border: 1px solid var(--line); border-radius: 6px; padding: 0 2px; background: none; cursor: pointer; }
