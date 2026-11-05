@@ -159,6 +159,15 @@
       return json({ chat: chatInfo(c), tier: c.tier, why: c.why, topic: topic ? TOPICS[String(id)]?.find((t) => t.id === topic) : null,
         read_upto: c.unread_count ? msgs[Math.max(0, msgs.length - Math.min(c.unread_count, 3)) - 1]?.id || 0 : 1e9, messages: msgs, has_older: false, has_newer: false });
     }
+    if ((m = p.match(/^\/api\/chat\/(-?\d+)\/upload$/))) {  // pretend to send: echo a message back
+      const id = Number(m[1]);
+      const name = decodeURIComponent(opts.headers?.["X-Filename"] || "file");
+      window.__demoUploads = [...(window.__demoUploads || []), { chat: id, name, caption: decodeURIComponent(opts.headers?.["X-Caption"] || ""), replyTo: opts.headers?.["X-Reply-To"] }];
+      const t = at(0, now.getHours(), now.getMinutes());
+      return json({ message: { id: 9000 + window.__demoUploads.length, chat_id: id, topic_id: null, image: null, date: t.date, sender: { ...ME, id: 1 }, text: decodeURIComponent(opts.headers?.["X-Caption"] || ""),
+        out: true, mentioned: false, reply_to_me: false, reply_to: Number(opts.headers?.["X-Reply-To"]) || null, thread_top: Number(opts.headers?.["X-Thread-Root"]) || null, reply_count: 0,
+        media: /\.(png|jpe?g|gif|webp)$/i.test(name) ? "photo" : `file: ${name}`, forwarded: false, fwd: null, link: null, pinned: false, edited: false, reactions: [], flags: ["from_me"] } });
+    }
     if (method !== "GET") return json({ ok: true, unread: 0, count: 0 });
     return json({ items: [], messages: [], chats: [], people: [] });
   };

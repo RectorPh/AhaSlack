@@ -874,6 +874,8 @@ async def send_upload(client, cfg: triage.Config, chat: Chat, data: bytes, filen
     import io
     f = io.BytesIO(data)
     f.name = filename
+    if caption:
+        await ensure_mentionable(client, chat, caption)
     msg = await client.send_file(chat.entity, f, caption=caption or None, parse_mode=ComposerMarkdown, reply_to=reply_to)
     return to_dict(msg, chat.entity, ZoneInfo(cfg.timezone), MAX_TEXT)
 

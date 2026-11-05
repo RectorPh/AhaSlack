@@ -530,9 +530,14 @@ async def upload(chat_id: int, request: Request):
     name = unquote(request.headers.get("x-filename") or "file")[:200] or "file"
     caption = unquote(request.headers.get("x-caption") or "")[:1000]
     topic = int(request.headers.get("x-topic") or 0)
-    reply_to = topic if c.forum and topic and topic != tg.GENERAL_TOPIC else None
+    reply_to = int(request.headers.get("x-reply-to") or 0) or None  # a reply in a thread
+    if not reply_to and c.forum and topic and topic != tg.GENERAL_TOPIC:
+        reply_to = topic  # posting into a topic
     msg = await _telegram(tg.send_upload(inbox.client, inbox.cfg, c, data, name, caption, reply_to), "send the file")
     print(f"uploaded {name} ({len(data)} bytes) to {c.name}", file=sys.stderr)
+    root = int(request.headers.get("x-thread-root") or 0) or None
+    if reply_to and reply_to != topic:
+        inbox.track_thread(c, msg | {"ts": time.time()}, root=root)
     return {"message": msg}
 
 
