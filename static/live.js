@@ -235,11 +235,11 @@ ACTIONS.push({ group: "This app (not in Slack)", id: "calm", label: "Calm Space:
 
 // ---------------------------------------------------------------- Preferences (⌘,): reading, notifications, sidebar, Calm Space
 const _openShortcuts = openShortcuts;
-openShortcuts = function () {
-  _openShortcuts();
+openShortcuts = function (tab = "prefs") {
+  _openShortcuts(tab);
   let panel = $("#prefs-panel");
   if (!panel) {
-    $("#sc-list").insertAdjacentHTML("beforebegin", `<div class="prefs-panel" id="prefs-panel"></div>`);
+    $("#prefs-body").insertAdjacentHTML("afterbegin", `<div class="prefs-panel" id="prefs-panel"></div>`);
     panel = $("#prefs-panel");
     panel.addEventListener("change", (e) => {
       const t = e.target;
@@ -254,18 +254,19 @@ openShortcuts = function () {
     });
   }
   const mode = uiPrefs.readMode || "leftoff";
-  panel.innerHTML = `<div class="sc-group">Mark as read</div><div class="pref-sub">When I view a conversation:</div>
+  panel.hidden = tab !== "prefs";
+  panel.innerHTML = `<div class="sc-group">Notifications</div>
+    <label class="pref"><input type="checkbox" name="notify" ${uiPrefs.notify === false ? "" : "checked"}> Notify me about direct messages and mentions</label>
+    <div class="sc-group">Mark as read</div><div class="pref-sub">When I view a conversation:</div>
     ${Object.entries(READ_MODES).map(([k, l]) => `<label class="pref"><input type="radio" name="readMode" value="${k}" ${mode === k ? "checked" : ""}> ${esc(l)}</label>`).join("")}
     ${state?.mark_read_enabled ? "" : `<div class="pref-sub err">Marking read on Telegram is off (mark_read_enabled in config.toml), so nothing is marked read yet.</div>`}
     <div class="sc-group">Threads</div>
     <label class="pref"><input type="checkbox" name="threads" ${uiPrefs.threads === false ? "" : "checked"}> Group replies into threads, like Slack (replies open on the right instead of in the channel)</label>
-    <div class="sc-group">Notifications</div>
-    <label class="pref"><input type="checkbox" name="notify" ${uiPrefs.notify === false ? "" : "checked"}> Notify me about direct messages and mentions</label>
     <div class="sc-group">Sidebar</div>
     <label class="pref">Sort <select name="sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${(uiPrefs.sort || "priority") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
       Show <select name="show">${Object.entries(SHOWS).map(([k, l]) => `<option value="${k}" ${(uiPrefs.show || "all") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
-    <label class="pref"><input type="checkbox" name="calm" ${uiPrefs.calm ? "checked" : ""}> Calm Space: hide the sidebar and everything but the conversation</label>
-    <div class="sc-group" style="margin-top:14px">Keyboard shortcuts</div>`;
+    <label class="pref"><input type="checkbox" name="calm" ${uiPrefs.calm ? "checked" : ""}> Calm Space: hide the sidebar and everything but the conversation (⌘J)</label>
+    <div class="pref-sub" style="margin-top:14px">Keyboard shortcuts are in the other tab.</div>`;
 };
 
 connectLive();

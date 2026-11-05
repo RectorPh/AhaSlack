@@ -165,11 +165,19 @@
 
 <!-- Keyboard shortcuts (configurable) -->
 <div class="overlay" id="shortcuts" hidden>
-  <div class="modal shortcuts">
-    <header class="modal-head"><h3>Preferences &amp; shortcuts</h3><button class="icon-btn" data-close title="Close">✕</button></header>
-    <p class="modal-sub">Click a shortcut to change it, then press the new keys. Saved for this app.</p>
-    <div class="sc-list" id="sc-list"></div>
-    <div class="modal-foot"><button class="btn" id="sc-reset">Reset all to defaults</button></div>
+  <div class="modal shortcuts prefs-modal">
+    <header class="modal-head"><h3>Preferences</h3><button class="icon-btn" data-close title="Close (Esc)">✕</button></header>
+    <div class="tabs pref-tabs" id="pref-tabs">
+      <button data-ptab="prefs" class="on">Preferences</button>
+      <button data-ptab="keys">Keyboard shortcuts</button>
+    </div>
+    <div class="modal-body" id="prefs-body">
+      <div id="keys-pane" hidden>
+        <p class="modal-sub">Click a shortcut to change it, then press the new keys. Saved for this app.</p>
+        <div class="sc-list" id="sc-list"></div>
+      </div>
+    </div>
+    <div class="modal-foot" id="keys-foot" hidden><button class="btn" id="sc-reset">Reset all to defaults</button></div>
   </div>
 </div>
 

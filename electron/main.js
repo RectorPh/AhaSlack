@@ -170,7 +170,7 @@ function buildMenu() {
     ] },
     { role: "windowMenu" },
     { role: "help", submenu: [
-      { label: "Keyboard Shortcuts", accelerator: "CmdOrCtrl+/", click: page("openShortcuts()") },
+      { label: "Keyboard Shortcuts", accelerator: "CmdOrCtrl+/", click: page('openShortcuts("keys")') },
       { label: "Setup Guide", click: () => showOnboarding() },
       { label: "Server Log", click: () => shell.openPath(path.join(LOG_DIR, "server.log")) },
     ] },

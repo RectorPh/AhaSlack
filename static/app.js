@@ -1609,7 +1609,7 @@ const ACTIONS = [
   ["Slack basics", "search", "Start a search", "Mod+G", [], "any", () => focusSearch(false)],
   ["Slack basics", "searchInChat", "Search in the current conversation", "Mod+F", [], "any", () => focusSearch(true)],
   ["Slack basics", "huddle", "Start, join, leave, or end a huddle (opens the voice chat in Telegram)", "Mod+Shift+H", [], "any", () => startHuddle()],
-  ["Slack basics", "help", "Open Help", "F1", [], "any", () => openShortcuts()],
+  ["Slack basics", "help", "Open Help", "F1", [], "any", () => openShortcuts("keys")],
   ["Slack basics", "fullScreen", "Toggle full screen view", "Mod+Ctrl+F", [], "any", toggleFullScreen],
   ["Slack basics", "people", "Open the People view", "Mod+Shift+E", [], "any", () => openSwitcher("people")],
   ["Slack basics", "quickSwitcher", "Jump to a conversation", "Mod+K", ["Mod+T"], "any", () => ($("#switcher").hidden ? openSwitcher() : closeSwitcher())],
@@ -2015,11 +2015,22 @@ async function savePrefs() {
   loadPrefs();
 }
 
-function openShortcuts() {
+// One dialog, two tabs: "prefs" (⌘,) and "keys" (keyboard shortcuts, F1 / ⌨).
+function openShortcuts(tab = "prefs") {
   closeSwitcher();
   $("#shortcuts").hidden = false;
   renderShortcuts();
+  showPrefTab(tab);
 }
+function showPrefTab(tab) {
+  $$("#pref-tabs [data-ptab]").forEach((b) => b.classList.toggle("on", b.dataset.ptab === tab));
+  $("#keys-pane").hidden = tab !== "keys";
+  $("#keys-foot").hidden = tab !== "keys";
+  const panel = $("#prefs-panel");
+  if (panel) panel.hidden = tab !== "prefs";
+  $("#prefs-body").scrollTop = 0;
+}
+$("#pref-tabs").addEventListener("click", (e) => { const b = e.target.closest("[data-ptab]"); if (b) showPrefTab(b.dataset.ptab); });
 function closeShortcuts() { $("#shortcuts").hidden = true; recording = null; }
 function renderShortcuts() {
   const groups = [...new Set([...ACTIONS.map((a) => a.group), ...FIXED.map((f) => f[0])])];
@@ -2069,7 +2080,7 @@ document.addEventListener("keydown", (e) => {
 $("#sc-reset").addEventListener("click", () => { overrides = {}; renderShortcuts(); savePrefs(); });
 $("#shortcuts").addEventListener("mousedown", (e) => { if (e.target.id === "shortcuts" || e.target.closest("[data-close]")) closeShortcuts(); });
 $("#confirm").addEventListener("mousedown", (e) => { if (e.target.id === "confirm") confirmBox.cancel?.(); });
-$("#open-shortcuts").addEventListener("click", () => openShortcuts());
+$("#open-shortcuts").addEventListener("click", () => openShortcuts("keys"));
 $("#ws-menu").addEventListener("click", () => openShortcuts());
 
 // ================================================================== start

@@ -110,8 +110,8 @@ function wireThemeSection(panel) {
 
 // Add the section to the top of Preferences (⌘,), above reading and notifications.
 const _openShortcutsThemed = openShortcuts;
-openShortcuts = function () {
-  _openShortcutsThemed();
+openShortcuts = function (tab = "prefs") {
+  _openShortcutsThemed(tab);
   const panel = $("#prefs-panel");
   if (!panel) return;
   panel.insertAdjacentHTML("afterbegin", themeSectionHtml());

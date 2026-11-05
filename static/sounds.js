@@ -111,8 +111,8 @@ $("#bell-menu").addEventListener("click", (e) => {
 });
 document.addEventListener("click", (e) => { if (!e.target.closest("#bell-menu")) $("#bell-menu").hidden = true; });
 function openSoundSettings() {
-  openShortcuts();
-  setTimeout(() => $(".sound-prefs")?.scrollIntoView({ block: "start" }), 150);
+  openShortcuts("prefs");
+  setTimeout(() => $(".sound-prefs")?.scrollIntoView({ block: "start" }), 50);
 }
 ACTIONS.push({ group: "This app (not in Slack)", id: "mute", label: "Mute or unmute sounds", def: "Mod+Alt+Shift+M", alt: [], when: "any", run: () => toggleMute() });
 
@@ -130,8 +130,8 @@ function soundSectionHtml() {
     <div class="pref-sub">Sounds play when you aren't already looking at that conversation. The bell in the top bar mutes them for a while.</div></div>`;
 }
 const _openShortcutsSounds = openShortcuts;
-openShortcuts = function () {
-  _openShortcutsSounds();
+openShortcuts = function (tab = "prefs") {
+  _openShortcutsSounds(tab);
   const panel = $("#prefs-panel");
   if (!panel) return;
   const notifHead = [...$$(".sc-group", panel)].find((h) => h.textContent === "Notifications");
