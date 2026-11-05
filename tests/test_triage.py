@@ -44,6 +44,11 @@ class Tiering(unittest.TestCase):
         self.assertEqual(e["tier"], MUST)
         self.assertIn("direct message", e["reasons"])
 
+    def test_dm_with_urgent_word_says_so(self):
+        e = self.tier(chat("dm", "Lan"), [msg("anh check gấp giúp em")])
+        self.assertEqual(e["reasons"], ["direct message", "urgent word: gấp"])
+        self.assertEqual(self.tier(chat("dm", "Lan"), [msg("anh ơi")])["reasons"], ["direct message"])
+
     def test_dm_from_bot_is_noise(self):
         self.assertEqual(self.tier(chat("bot", "Some bot"), [msg("hi", bot=True)])["tier"], NOISE)
 

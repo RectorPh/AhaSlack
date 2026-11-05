@@ -248,6 +248,7 @@ openShortcuts = function (tab = "prefs") {
       if (t.name === "calm") { uiPrefs.calm = t.checked; applyCalm(); }
       if (t.name === "threads") { uiPrefs.threads = t.checked; if (view === "chat") rerenderChat(); }
       if (t.name === "sort") uiPrefs.sort = t.value;
+      if (t.name === "dmNeedsYou") uiPrefs.dmNeedsYou = t.value;
       if (t.name === "show") uiPrefs.show = t.value;
       saveUi();
       renderSidebar();
@@ -265,6 +266,7 @@ openShortcuts = function (tab = "prefs") {
     <div class="sc-group">Sidebar</div>
     <label class="pref">Sort <select name="sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${(uiPrefs.sort || "priority") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
       Show <select name="show">${Object.entries(SHOWS).map(([k, l]) => `<option value="${k}" ${(uiPrefs.show || "all") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+    <label class="pref">Direct messages in Needs you <select name="dmNeedsYou">${Object.entries(DM_NEEDS_YOU).map(([k, l]) => `<option value="${k}" ${(uiPrefs.dmNeedsYou || "important") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
     <label class="pref"><input type="checkbox" name="calm" ${uiPrefs.calm ? "checked" : ""}> Calm Space: hide the sidebar and everything but the conversation (⌘J)</label>
     <div class="pref-sub" style="margin-top:14px">Keyboard shortcuts are in the other tab.</div>`;
 };

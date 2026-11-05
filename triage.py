@@ -164,6 +164,9 @@ def classify(chat: dict, msgs: list[dict], cfg: Config) -> tuple[str, list[str]]
         reasons.append("VIP chat")
     if chat.get("kind") == "dm" and incoming:
         reasons.append("direct message")
+        urgent = sorted({f.split(":", 1)[1] for m in incoming for f in m["flags"] if f.startswith("urgent:")})
+        if urgent:  # makes the DM important: it also shows in Needs you
+            reasons.append(f"urgent word: {', '.join(urgent)}")
     if chat.get("unread_mark"):
         reasons.append("you marked it unread")
     if reasons:

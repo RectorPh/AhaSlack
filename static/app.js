@@ -263,6 +263,18 @@ function setBadges(n) {
 }
 
 // DMs always live under Direct messages (like Slack); "Needs you" is for groups and channels.
+// Important unread DMs also show in Needs you (they stay in Direct messages too). Returns why, or null.
+// uiPrefs.dmNeedsYou: "important" (default) | "all" unread DMs | "none".
+const PLAIN_DM = new Set(["direct message", "new message", ""]);
+function dmNeedsYou(c) {
+  if (c.kind !== "dm" || c.muted || c.ignored || !c.unread_count) return null;
+  const mode = uiPrefs.dmNeedsYou || "important";
+  if (mode === "none") return null;
+  const why = (c.why || "").split(/;\s*/).map((r) => r.replace(/ ×\d+$/, "").trim()).filter((r) => !PLAIN_DM.has(r));
+  if (why.length) return why.join(" · ");
+  if (affinity(c.id) >= 45) return "someone you talk to often";
+  return mode === "all" ? "unread direct message" : null;
+}
 function sectionOf(c) {
   if (c.kind === "dm") return c.ignored || c.muted ? "quiet" : "dms";
   if (c.kind === "bot") return "quiet";  // a chat with a bot is a DM, but not a person
@@ -275,6 +287,7 @@ const SECTIONS = [["must", "Needs you"], ["channels", "Channels"], ["dms", "Dire
 // Slack Standard sidebar: a Starred section, then sections sorted by priority / recent / A→Z,
 // optionally showing only unreads or only mentions & DMs (saved server-side in ui prefs).
 const SORTS = { priority: "Priority", recent: "Recent activity", alpha: "Alphabetical" };
+const DM_NEEDS_YOU = { important: "Important ones (VIP, your name, urgent words, people you talk to most)", all: "Every unread DM", none: "None (only in Direct messages)" };
 const SHOWS = { all: "All conversations", unreads: "Unreads only", mentions: "Mentions & DMs only" };
 const TIER_RANK = { must: 0, maybe: 1, noise: 3 };
 function priorityScore(c) {
@@ -301,6 +314,7 @@ function renderSidebar() {
   for (const c of state.chats) {
     if ((typeof inFolder === "function" && !inFolder(c)) || !showChat(c)) continue;
     groups[isStarred(c.id) ? "starred" : sectionOf(c)].push(c);
+    if (!isStarred(c.id) && dmNeedsYou(c)) groups.must.push(c);  // also in Needs you
   }
   for (const k in groups) sortChats(groups[k]);
   const filterNote = (uiPrefs.show || "all") !== "all" ? `<div class="sb-filter">Showing ${esc(SHOWS[uiPrefs.show].toLowerCase())} · <a href="#" data-show-all>show all</a></div>` : "";
@@ -313,8 +327,9 @@ function renderSidebar() {
       if (c.forum && topicsOf(c.id).length) return forumBlock(c);
       const badge = c.kind === "dm" ? c.unread_count : c.unread_mentions;
       const icon = c.kind === "dm" || c.kind === "bot" ? `<span class="avwrap">${chatAv(c)}</span>` : `<span class="sb-ico">${chatGlyph(c)}</span>`;
+      const dmWhy = key === "must" && c.kind === "dm" ? dmNeedsYou(c) : null;
       return `<button class="sb-item ${c.unread_count ? "unread" : ""} ${c.muted || c.ignored ? "muted" : ""} ${view === "chat" && currentChat === c.id ? "active" : ""}"
-        data-chat="${c.id}" title="${esc(c.why || c.name)}">${icon}<span class="nm">${esc(c.name)}</span>
+        data-chat="${c.id}" title="${esc(dmWhy ? `Direct message · ${dmWhy}` : c.why || c.name)}">${icon}<span class="nm">${esc(c.name)}</span>${dmWhy ? `<span class="dm-tag">DM</span>` : ""}
         ${c.ignored ? `<span class="ign" title="Ignored">⊘</span>` : ""}${badge ? `<b class="pill">${badge > 99 ? "99+" : badge}</b>` : ""}
         <span class="more-btn" data-menu="${c.id}" title="More options" role="button">⋯</span></button>`;
     }).join("");
@@ -1654,6 +1669,7 @@ function switcherCommands() {
   add(`Notifications: ${uiPrefs.notify === false ? "turn on" : "turn off"}`, () => pref("notify", uiPrefs.notify === false), { icon: "🔔", keywords: "notify alerts desktop" });
   if (typeof READ_MODES !== "undefined") for (const [k, l] of Object.entries(READ_MODES)) add(`Mark as read: ${l}`, () => pref("readMode", k), { icon: "✓", on: (uiPrefs.readMode || "leftoff") === k, keywords: "read unread reading" });
   for (const [k, l] of Object.entries(SORTS)) add(`Sidebar sort: ${l}`, () => pref("sort", k), { icon: "⇅", on: (uiPrefs.sort || "priority") === k, keywords: "sidebar order sort" });
+  for (const [k, l] of Object.entries(DM_NEEDS_YOU)) add(`DMs in Needs you: ${l}`, () => pref("dmNeedsYou", k), { icon: "✉", on: (uiPrefs.dmNeedsYou || "important") === k, keywords: "direct message needs you important sidebar" });
   for (const [k, l] of Object.entries(SHOWS)) add(`Sidebar show: ${l}`, () => pref("show", k), { icon: "☰", on: (uiPrefs.show || "all") === k, keywords: "sidebar filter show" });
   for (const a of ACTIONS) {  // every shortcut action that works from anywhere
     if (a.when !== "any" || ["quickSwitcher", "prefs", "calm", "mute"].includes(a.id)) continue;

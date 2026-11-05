@@ -19,7 +19,7 @@
     unread_mentions: 0, unread_mark: false, photo: null, last_ts: now / 1000 - 3600, link: null, forum: false, tier: "maybe", why: "", ignored: false, ...o });
   const CHATS = [
     chat(-1001, "Product Squad", "group", { unread_count: 6, unread_mentions: 1, tier: "must", why: "@mentioned you; replied to you", last_ts: now / 1000 - 300 }),
-    chat(101, "Linh Tran", "dm", { unread_count: 2, tier: "must", why: "direct message", last_ts: now / 1000 - 600 }),
+    chat(101, "Linh Tran", "dm", { unread_count: 2, tier: "must", why: "direct message; urgent word: asap", last_ts: now / 1000 - 600 }),
     chat(-1002, "Ops Center", "group", { unread_count: 9, forum: true, last_ts: now / 1000 - 900 }),
     chat(-1003, "Design Crit", "group", { unread_count: 3, last_ts: now / 1000 - 4000 }),
     chat(-1004, "Engineering", "group", { unread_count: 17, last_ts: now / 1000 - 1800 }),

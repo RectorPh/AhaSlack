@@ -679,3 +679,6 @@ body.resizing-pane iframe, body.resizing-pane .msg { pointer-events: none; }
 .plus-menu .mi .k { margin-left: auto; opacity: .6; font-size: 12px; }
 .plus-menu .pm-ico { width: 20px; text-align: center; }
 .plus-menu .pm-note { font-size: 12px; color: var(--muted); padding: 2px 16px 4px; }
+
+/* an important DM shown in Needs you */
+.sb-item .dm-tag { font-size: 9.5px; font-weight: 800; letter-spacing: .04em; color: var(--side-dim); border: 1px solid var(--side-dim); border-radius: 3px; padding: 0 3px; margin-left: 4px; flex: none; opacity: .8; }

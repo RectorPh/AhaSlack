@@ -127,6 +127,8 @@ class Live:
             reasons = ["direct message"] if chat.kind == "dm" else []
             reasons += [{"reply_to_me": "replied to you", "mention": "@mentioned you", "vip_sender": "VIP sender"}.get(
                 f, f"says '{f.split(':', 1)[-1]}'") for f in msg["flags"] if f.split(":")[0] in triage.STRONG_FLAGS]
+            if chat.kind == "dm":  # an urgent word makes a DM important (it shows in Needs you)
+                reasons += [f"urgent word: {f.split(':', 1)[1]}" for f in msg["flags"] if f.startswith("urgent:")]
             self.tiers[chat.id] = ("must", reasons or ["new message"])
 
         thread = self.inbox.track_thread(chat, msg | {"ts": m.date.timestamp()})  # threads you're in
