@@ -20,6 +20,11 @@
   .tick { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #ffffff55; display: grid; place-items: center; font-size: 12px; font-weight: 800; flex: none; }
   .done .tick { background: var(--ok); border-color: var(--ok); color: #fff; }
   .opt .tick { border-style: dashed; }
+  .engine { -webkit-app-region: no-drag; margin: 14px 8px 0; font-size: 12.5px; color: #e8dcea; background: #ffffff14; border-radius: 8px; padding: 8px 10px; line-height: 1.4; }
+  .engine.done .spin { display: none; }
+  .spin { display: inline-block; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .progress { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; font-size: 14px; color: var(--muted); }
   aside .foot { margin-top: auto; font-size: 12px; color: #bfa9c3; padding: 0 8px; -webkit-app-region: no-drag; }
   main { overflow-y: auto; padding: 44px 56px 40px; }
   .step { max-width: 720px; display: none; }
@@ -69,6 +74,7 @@
       <button data-go="claude" class="opt"><span class="tick" id="t-claude">5</span>Inbox Manager <small>(optional)</small></button>
       <button data-go="done"><span class="tick" id="t-done">✓</span>Open AhaSlack</button>
     </div>
+    <div class="engine" id="engine" hidden><span class="spin">◌</span> <span id="engine-text"></span></div>
     <div class="foot">Your login stays on this Mac. AhaSlack talks to Telegram directly, with no server in between.</div>
   </aside>
 
@@ -173,6 +179,7 @@
       <p class="lead" id="done-lead">Steps 1 to 3 are needed. When they're ticked, open AhaSlack.</p>
       <p>The first start takes a minute: it downloads AhaSlack's Python packages and reads your chats. After that, it opens in seconds and stays in sync live.</p>
       <div class="row"><button class="btn primary" data-act="continue" id="go">Open AhaSlack</button></div>
+      <div class="progress" id="progress" hidden><span class="spin">◌</span><span id="progress-text"></span></div>
       <p class="lead" style="font-size:14px">Stuck? <a href="#" data-act="open-log">Open the server log</a> or see the setup guide in the <a href="#" data-act="open-readme">README</a>.</p>
     </section>
   </main>
@@ -182,6 +189,7 @@
   const $ = (s) => document.querySelector(s);
   const order = ["uv", "api", "login", "config", "claude", "done"];
   let status = {};
+  let startingNow = false;
   function go(id) {
     document.querySelectorAll(".step").forEach((s) => s.classList.toggle("on", s.id === "s-" + id));
     document.querySelectorAll(".nav button").forEach((b) => b.classList.toggle("on", b.dataset.go === id));
@@ -196,6 +204,7 @@
       claude: status.claude ? ["ok", "✓ Claude Code is installed"] : ["wait", "Claude Code isn't installed (optional)"],
     };
     document.querySelectorAll("[data-status]").forEach((el) => { const [cls, text] = msg[el.dataset.status]; el.className = "status " + cls; el.textContent = text; });
+    if (startingNow) return;  // the app is starting: keep the progress view as it is
     $("#go").disabled = !done.done;
     $("#done-lead").textContent = done.done ? "You're connected. Open AhaSlack to see your Telegram." : `Still to do: ${[!status.uv && "install uv (step 1)", !status.session && "log in (step 3)"].filter(Boolean).join(" and ")}.`;
   }
@@ -207,13 +216,36 @@
     if (!a) return;
     e.preventDefault();
     const label = a.textContent;
-    if (a.dataset.act === "continue") { a.disabled = true; a.textContent = "Starting AhaSlack… (the first start takes a minute)"; }
+    if (a.dataset.act === "continue") { a.disabled = true; a.textContent = "Starting AhaSlack…"; $("#progress").hidden = false; if (!$("#progress-text").textContent) $("#progress-text").textContent = "Starting…"; }
     try { await window.setup.act(a.dataset.act); } finally { if (a.dataset.act === "continue") { a.disabled = false; a.textContent = label; } }
     poll();
   });
+  // The engine download (first start), shown in the sidebar and under "Open AhaSlack"
+  function showProgress(msg) {
+    if (!msg) return;
+    const done = msg.startsWith("✓");
+    $("#engine").hidden = false;
+    $("#engine").classList.toggle("done", done);
+    $("#engine-text").textContent = done ? msg : `Installing AhaSlack's engine: ${msg}`;
+    $("#progress").hidden = done;
+    $("#progress-text").textContent = msg;
+  }
+  window.setup.onProgress(showProgress);
+  function startingMode() {  // opened by the app while it starts (already set up)
+    startingNow = true;
+    go("done");
+    $("#done-lead").textContent = "Starting AhaSlack. The first start downloads its engine (about 150 MB); this window closes by itself when it's ready.";
+    $("#go").disabled = true;
+    $("#go").textContent = "Starting AhaSlack…";
+    $("#progress").hidden = false;
+  }
+  window.setup.onMode((m) => { if (m === "starting") startingMode(); });
   (async () => {
     await poll();
-    go(!status.uv ? "uv" : !status.creds ? "api" : !status.session ? "login" : "done");
+    const starting = new URLSearchParams(location.search).get("mode") === "starting";
+    if (starting) startingMode();
+    else go(!status.uv ? "uv" : !status.creds ? "api" : !status.session ? "login" : "done");
+    showProgress(await window.setup.progress());
     setInterval(poll, 2000);
   })();
 </script>

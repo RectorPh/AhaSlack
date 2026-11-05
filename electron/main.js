@@ -28,6 +28,52 @@ function findUv() {
   }
 }
 
+// ---------------------------------------------------------------- first-start progress
+// The first start downloads AhaSlack's Python packages (about 150 MB, mostly the Inbox Manager's
+// claude-agent-sdk). uv prints what it's doing; the setup window shows it so nothing looks stuck.
+let progressText = "";
+let lastOutputAt = Date.now();
+function reportProgress(chunk) {
+  lastOutputAt = Date.now();
+  for (const raw of String(chunk).split(/\r?\n/)) {
+    const l = raw.trim();
+    let m, msg = null;
+    if ((m = l.match(/^Downloading (\S+) \(([^)]+)\)/))) msg = `Downloading ${m[1]} (${m[2]})…`;
+    else if ((m = l.match(/^Downloaded (\S+)/))) msg = `Downloaded ${m[1]}`;
+    else if ((m = l.match(/^(Prepared|Installed|Resolved) (\d+) packages?/))) msg = `${m[1]} ${m[2]} packages`;
+    else if (/AhaSlack engine ready/.test(l)) msg = "✓ AhaSlack's engine is installed";
+    else if (/Uvicorn running|Application startup complete/.test(l)) msg = "Connecting to Telegram…";
+    if (msg) {
+      progressText = msg;
+      setupWin?.webContents.send("setup:progress", msg);
+    }
+  }
+}
+// Started as soon as uv is there (while you get your API keys and log in), so opening AhaSlack
+// afterwards doesn't wait for the download.
+let preparing = null;
+function prepareEngine() {
+  if (preparing || server) return preparing;
+  const uv = findUv();
+  if (!uv) return null;
+  fs.mkdirSync(LOG_DIR, { recursive: true });
+  const log = fs.createWriteStream(path.join(LOG_DIR, "server.log"), { flags: "a" });
+  preparing = new Promise((resolve) => {
+    const p = spawn(uv, ["run", "--script", "server.py", "--prepare"], {
+      cwd: SERVER_DIR, env: { ...process.env, PATH: `${path.dirname(uv)}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ""}` },
+    });
+    for (const s of [p.stdout, p.stderr]) s.on("data", (d) => { reportProgress(d); log.write(d); });
+    p.on("exit", (code) => {
+      if (code !== 0) {
+        preparing = null;  // try again later (e.g. when you click Open AhaSlack)
+        setupWin?.webContents.send("setup:progress", "The download stopped. It will continue when you open AhaSlack.");
+      }
+      resolve(code === 0);
+    });
+  });
+  return preparing;
+}
+
 function ping() {
   return new Promise((resolve) => {
     const req = http.get(BASE + "api/state", { headers: { Host: `127.0.0.1:${PORT}` } }, (res) => { res.resume(); resolve(true); });
@@ -48,16 +94,21 @@ async function startServer() {
     env: { ...process.env, PATH: `${path.dirname(uv)}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ""}`, INBOX_PORT: String(PORT) },
   });
   for (const stream of [server.stdout, server.stderr]) {
-    stream.on("data", (d) => { serverLog = (serverLog + d.toString()).slice(-4000); log.write(d); });
+    stream.on("data", (d) => { serverLog = (serverLog + d.toString()).slice(-4000); log.write(d); reportProgress(d); });
   }
   let exited = false;
   server.on("exit", (code) => {
     exited = true;
     if (!quitting && win) win.webContents.executeJavaScript(`document.querySelector('#status') && (document.querySelector('#status').innerHTML = '<span class="err">Server stopped (code ${code})</span>')`).catch(() => {});
   });
-  for (let i = 0; i < 180; i++) {  // first start downloads Python packages, so allow a while
+  // The first start downloads ~150 MB: keep waiting while uv is still printing progress. Give up only
+  // if it has been silent for 3 minutes, or after 30 minutes in all.
+  const started = Date.now();
+  lastOutputAt = Date.now();
+  while (true) {
     if (await ping()) return true;
     if (exited) break;
+    if (Date.now() - started > 30 * 60e3 || (Date.now() - lastOutputAt > 3 * 60e3 && Date.now() - started > 90e3)) break;
     await new Promise((r) => setTimeout(r, 500));
   }
   if (/Not logged in|session expired/i.test(serverLog)) return "setup";
@@ -80,26 +131,31 @@ function findClaude() {
 }
 function setupStatus() {
   const has = (f) => fs.existsSync(path.join(TG_HOME, f));
-  return { uv: !!findUv(), creds: has("credentials.json"), session: has("inbox.session"), config: has("config.toml"), claude: !!findClaude() };
+  return { uv: !!findUv(), creds: has("credentials.json"), session: has("inbox.session"), config: has("config.toml"), claude: !!findClaude(), engine: !!preparing };
 }
 function inTerminal(cmd) {
   execFileSync("/usr/bin/osascript", ["-e", `tell application "Terminal" to do script ${JSON.stringify(cmd)}`, "-e", 'tell application "Terminal" to activate']);
 }
 let setupWin = null;
-function showOnboarding() {
-  if (setupWin) return setupWin.focus();
+function showOnboarding(mode = "") {
+  if (setupWin) { if (mode) setupWin.webContents.send("setup:mode", mode); return setupWin.focus(); }
   setupWin = new BrowserWindow({
     width: 1080, height: 740, minWidth: 840, minHeight: 560, title: "Welcome to AhaSlack",
     titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 14 }, backgroundColor: "#4b1f52", show: false,
     webPreferences: { preload: path.join(__dirname, "onboarding-preload.js"), contextIsolation: true, sandbox: true },
   });
-  setupWin.loadFile(path.join(__dirname, "onboarding.html"));
+  setupWin.loadFile(path.join(__dirname, "onboarding.html"), mode ? { query: { mode } } : undefined);
   setupWin.once("ready-to-show", () => setupWin.show());
   setupWin.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   setupWin.webContents.on("will-navigate", (e) => e.preventDefault());
   setupWin.on("closed", () => { setupWin = null; if (!win && !quitting) app.quit(); });
 }
-ipcMain.handle("setup:status", () => setupStatus());
+ipcMain.handle("setup:status", () => {
+  const st = setupStatus();
+  if (st.uv && !st.engine) prepareEngine();  // start the big download early, in the background
+  return st;
+});
+ipcMain.handle("setup:progress-now", () => progressText);
 ipcMain.handle("setup:act", async (_e, name) => {
   if (name === "install-uv") inTerminal("curl -LsSf https://astral.sh/uv/install.sh | sh");
   else if (name === "open-mytg") shell.openExternal("https://my.telegram.org/auth");
@@ -196,10 +252,15 @@ async function offerMoveToApplications() {
 app.whenReady().then(async () => {
   buildMenu();
   await offerMoveToApplications();
-  const ok = await startServer();
+  const starting = startServer();
+  // Still not up after a moment (first start: downloading)? Show the progress instead of nothing.
+  const slow = setTimeout(() => { if (!win) showOnboarding("starting"); }, 2500);
+  const ok = await starting;
+  clearTimeout(slow);
   if (ok === "setup") return showOnboarding();
   if (!ok) { quitting = true; return app.quit(); }
   createWindow();
+  setupWin?.close();
 });
 app.on("activate", () => { if (!win && server !== undefined) createWindow(); });
 app.on("window-all-closed", () => {});  // stay in the Dock like Slack; ⌘Q quits

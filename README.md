@@ -229,8 +229,10 @@ Everything else works without it.
 
 ### Then: open AhaSlack
 
-The first start takes about a minute while it downloads its Python packages and reads your
-chats. After that it opens in seconds and stays in sync live.
+The first start downloads AhaSlack's Python packages (about 150 MB, mostly the Inbox Manager's
+`claude-agent-sdk`). The setup guide starts that download in the background as soon as uv is
+installed and shows its progress, so it's usually done by the time you've logged in. After that
+it opens in seconds and stays in sync live.
 
 ### If something goes wrong
 
@@ -241,6 +243,7 @@ chats. After that it opens in seconds and stays in sync live.
 | "Telegram session expired or was revoked" | You (or Telegram) logged this device out. Open **Help → Setup Guide** and do step 4 again. |
 | macOS says it **can't check the developer** | Right-click AhaSlack in Applications → **Open** → **Open**. |
 | The app says its server didn't start | **Help → Server Log** shows why. Check that `uv` works in Terminal (`uv --version`). |
+| Stuck on "Starting AhaSlack…" | The first start is downloading ~150 MB; the progress line shows what. On a slow connection give it a few minutes. If it stopped, **Help → Server Log** says why; opening AhaSlack again resumes the download. |
 | You want to disconnect | `uv run --script login.py --logout`, or Telegram → Settings → Devices → end the AhaSlack session. |
 
 ## Other ways to run it

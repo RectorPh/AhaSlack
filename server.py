@@ -33,6 +33,11 @@ from live import Live
 from db import MentionDB
 import stickers
 
+if __name__ == "__main__" and "--prepare" in sys.argv:
+    # First-run warm-up from the setup window: by now uv has downloaded and installed every package.
+    print("AhaSlack engine ready", flush=True)
+    sys.exit(0)
+
 STATIC = Path(__file__).with_name("static")
 STATE_FILE = tg.HOME / "ui_state.json"
 PORT = int(os.environ.get("INBOX_PORT", "8765"))
