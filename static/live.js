@@ -278,6 +278,7 @@ openShortcuts = function (tab = "prefs") {
       if (t.name === "notify") { uiPrefs.notify = t.checked; if (t.checked && "Notification" in window) Notification.requestPermission(); }
       if (t.name === "calm") { uiPrefs.calm = t.checked; applyCalm(); }
       if (t.name === "threads") { uiPrefs.threads = t.checked; if (view === "chat") rerenderChat(); }
+      if (t.name === "dmThreads") { uiPrefs.dmThreads = t.checked; if (view === "chat") rerenderChat(); }
       if (t.name === "threadGuess") { uiPrefs.threadGuess = t.checked; if (view === "chat") rerenderChat(); }
       if (t.name === "threadAi") { uiPrefs.threadAi = { ...(uiPrefs.threadAi || {}), enabled: t.checked }; setTimeout(refreshAiStatus, 300); }
       if (t.name === "threadAiModel") { uiPrefs.threadAi = { ...(uiPrefs.threadAi || {}), model: t.value.trim() || "qwen2.5:3b" }; setTimeout(refreshAiStatus, 300); }
@@ -297,6 +298,7 @@ openShortcuts = function (tab = "prefs") {
     ${state?.mark_read_enabled ? "" : `<div class="pref-sub err">Marking read on Telegram is off (mark_read_enabled in config.toml), so nothing is marked read yet.</div>`}
     <div class="sc-group">Threads</div>
     <label class="pref"><input type="checkbox" name="threads" ${uiPrefs.threads === false ? "" : "checked"}> Group replies into threads, like Slack (replies open on the right instead of in the channel)</label>
+    <label class="pref"><input type="checkbox" name="dmThreads" ${uiPrefs.dmThreads === false ? "" : "checked"}> Also in direct messages (turn off to show DM replies inline, like Telegram)</label>
     <label class="pref"><input type="checkbox" name="threadGuess" ${uiPrefs.threadGuess === false ? "" : "checked"}> Also group someone's follow-up sent within 2 minutes of their thread reply (marked AUTO; ⇱ undoes one)</label>
     <label class="pref"><input type="checkbox" name="threadAi" ${uiPrefs.threadAi?.enabled ? "checked" : ""}> Local AI: let a small model on this Mac place messages sent without Reply (through Ollama; nothing leaves your Mac)</label>
     <div class="pref ai-row">Model <input name="threadAiModel" value="${esc(uiPrefs.threadAi?.model || "qwen2.5:3b")}" spellcheck="false"> <span id="ai-status" class="sub">Checking…</span></div>

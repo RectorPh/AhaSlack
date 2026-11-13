@@ -25,3 +25,13 @@ def test_picked_tags_parse_into_telegram_links():
 
 def test_member_search_ignores_accents():
     assert tg._fold("Mỹ Nhàn") == "my nhan" and tg._fold("Đức") == "duc"
+
+
+def test_a_sent_reply_from_a_short_update_keeps_its_reply_link():
+    """DMs and basic groups: Telethon gives the sent message an InputReplyToMessage."""
+    from telethon import types
+    import tg
+    msg = types.Message(id=50, peer_id=types.PeerUser(7), message="ok", date=None, out=True,
+                        reply_to=types.InputReplyToMessage(reply_to_msg_id=42))
+    tg.fix_sent_reply(msg)
+    assert tg.reply_target(msg) == 42 and tg.thread_top(msg) == 42

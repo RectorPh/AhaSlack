@@ -5,7 +5,10 @@
 // Reply links, guessed ones marked AUTO). The channel then shows only thread roots, with a
 // "N replies" bar under each, and the thread opens in the right pane with its own message box.
 
-const threadsOn = () => uiPrefs.threads !== false;
+// Threads in a chat: off everywhere (uiPrefs.threads), or off in DMs only (uiPrefs.dmThreads),
+// where people seldom use Reply and the guessed threads are often wrong.
+const isDmChat = (id) => ["dm", "bot"].includes(chatById(id)?.kind);
+const threadsOn = (chatId = currentChat) => uiPrefs.threads !== false && !(uiPrefs.dmThreads === false && isDmChat(chatId));
 const GUESSED = new Set(["burst", "answer", "ai"]);
 let threadView = null;  // the thread open in the pane: {chatId, rootId, root, replies, target, loading}
 
@@ -325,4 +328,4 @@ function focusInThread(msgId) {
 }
 
 ACTIONS.push({ group: "This app (not in Slack)", id: "threads-toggle", label: "Group replies into threads (Slack style)", def: "Mod+Alt+Shift+T", alt: [], when: "any",
-  run: () => { uiPrefs.threads = !threadsOn(); saveUi(); if (view === "chat") rerenderChat(); toast(threadsOn() ? "🧵 Replies are grouped into threads" : "Replies show in the channel, like Telegram"); } });
+  run: () => { uiPrefs.threads = uiPrefs.threads === false; saveUi(); if (view === "chat") rerenderChat(); toast(uiPrefs.threads !== false ? "🧵 Replies are grouped into threads" : "Replies show in the channel, like Telegram"); } });

@@ -28,15 +28,28 @@ const linkify = (h) => h.replace(/https?:\/\/[^\s<]+[^\s<.,;:!?)\]]/g, (u) => `<
 const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const fold = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
 
+// A link target from Telegram: only web, Telegram and mail links; a bare "t.me/x" gets https://.
+function safeHref(u) {
+  u = String(u || "").trim();
+  if (/^(https?|tg|mailto):/i.test(u)) return u;
+  return /^[a-z][a-z0-9+.-]*:/i.test(u) ? null : `https://${u}`;
+}
+
 // ments: tags of people by name, [offset, length, user_id] (UTF-16 offsets, same as JS strings).
-function tgText(text, media, highlight, ments) {
+// links: [offset, length, url] — url is a text link's hidden target, or null when the text is the link.
+function tgText(text, media, highlight, ments, links) {
   text = text || "";
+  const spans = [...(ments || []).map(([off, len, uid]) => ({ off, len, uid })),
+    ...(links || []).map(([off, len, url]) => ({ off, len, url: url ?? text.slice(off, off + len) }))];
   let h = "", pos = 0;
-  for (const [off, len, uid] of [...(ments || [])].sort((a, b) => a[0] - b[0])) {
-    if (off < pos || off >= text.length) continue;
-    h += plainText(text.slice(pos, off));
-    h += `<span class="${uid === state?.me?.peer ? "at-me" : "at-mention"}">${esc(text.slice(off, off + len))}</span>`;
-    pos = off + len;
+  for (const s of spans.sort((a, b) => a.off - b.off)) {
+    if (s.off < pos || s.off >= text.length) continue;
+    h += plainText(text.slice(pos, s.off));
+    const inner = esc(text.slice(s.off, s.off + s.len));
+    const href = s.url !== undefined && safeHref(s.url);
+    if (s.uid !== undefined) h += `<span class="${s.uid === state?.me?.peer ? "at-me" : "at-mention"}">${inner}</span>`;
+    else h += href ? `<a href="${esc(href)}" target="_blank" rel="noopener" title="${esc(s.url)}">${inner}</a>` : inner;
+    pos = s.off + s.len;
   }
   h += plainText(text.slice(pos));
   if (highlight) h = h.replace(new RegExp(`(${reEsc(esc(highlight))})(?![^<]*>)`, "gi"), "<mark>$1</mark>");
@@ -970,7 +983,7 @@ function msgRow(m, prev, { actions = "", tag = "", cls = "", highlight = "", aft
   const bar = actions ? `<div class="hover-bar">${actions}</div>` : "";
   const img = imageHtml(m);
   const edited = m.edited ? ` <span class="edited">(edited)</span>` : "";
-  const text = (m.text || (!img && m.media)) ? `<div class="tg-text">${tgText(m.text, img ? null : m.media, highlight, m.ments)}${edited}</div>` : "";
+  const text = (m.text || (!img && m.media)) ? `<div class="tg-text">${tgText(m.text, img ? null : m.media, highlight, m.ments, m.links)}${edited}</div>` : "";
   const reacts = (m.reactions || []).length ? `<div class="reacts">${m.reactions.map((r) =>
     `<button class="react-chip ${r.mine ? "mine" : ""}" data-emo="${esc(r.emoji)}" data-chat="${m.chat_id ?? ""}" data-msg="${m.id}" title="${r.mine ? "Remove your reaction" : "React with " + esc(r.emoji)}">${esc(r.emoji)} <b>${r.count}</b></button>`).join("")}</div>` : "";
   const pin = m.pinned ? `<div class="pin-tag">📌 Pinned</div>` : "";
@@ -1747,6 +1760,7 @@ function switcherCommands() {
   add(`${uiPrefs.calm ? "Leave" : "Enter"} Calm Space`, () => toggleCalm(), { icon: "☾", key: plainCombo("Mod+J"), keywords: "focus zen hide sidebar" });
   add("Check thread accuracy", () => openThreadCheck(), { icon: "🎯", keywords: "threads accuracy grouping rules label test" });
   add(`Threads: ${uiPrefs.threads === false ? "group replies into threads" : "show replies inline (Telegram style)"}`, () => pref("threads", uiPrefs.threads === false), { icon: "🧵", keywords: "threads replies grouping" });
+  add(`Threads in DMs: ${uiPrefs.dmThreads === false ? "turn on" : "turn off (show DM replies inline)"}`, () => pref("dmThreads", uiPrefs.dmThreads === false), { icon: "🧵", keywords: "threads direct messages dm replies inline" });
   add(`Notifications: ${uiPrefs.notify === false ? "turn on" : "turn off"}`, () => pref("notify", uiPrefs.notify === false), { icon: "🔔", keywords: "notify alerts desktop" });
   if (typeof READ_MODES !== "undefined") for (const [k, l] of Object.entries(READ_MODES)) add(`Mark as read: ${l}`, () => pref("readMode", k), { icon: "✓", on: (uiPrefs.readMode || "leftoff") === k, keywords: "read unread reading" });
   for (const [k, l] of Object.entries(SORTS)) add(`Sidebar sort: ${l}`, () => pref("sort", k), { icon: "⇅", on: (uiPrefs.sort || "priority") === k, keywords: "sidebar order sort" });

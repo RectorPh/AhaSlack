@@ -54,6 +54,15 @@ def test_short_answer_from_someone_in_the_thread():
     assert "3" not in run(base + [m(3, "a", 60, "ok để anh xem lại toàn bộ luồng rồi báo team sau nhé")])["root"]
 
 
+def test_reply_to_a_guessed_thread_message_joins_that_thread():
+    # 3 is grouped by the burst rule; replying to 3 (↩ in the thread pane) stays in thread 1
+    msgs = [m(1, "a", 0, "q"), m(2, "b", 10, "trả lời", reply_to=1), m(3, "b", 40, "thêm ý nữa"),
+            m(4, "me", 90, "ok để mình xem", reply_to=3), m(5, "a", 120, "cảm ơn", reply_to=4)]
+    for rules in ("classic", "v2"):
+        r = run(msgs, rules=rules)
+        assert r["root"]["3"] == 1 and r["root"]["4"] == 1 and r["root"]["5"] == 1, rules
+
+
 def test_classic_rules_are_the_default():
     base = [m(1, "a", 0, "q"), m(2, "b", 10, "trả lời", reply_to=1)]
     r = run(base + [m(3, "b", 100, "mọi người xem thêm")], rules="classic")

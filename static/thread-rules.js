@@ -112,6 +112,14 @@ function buildThreadsWith(msgs, { overrides = () => undefined, guesses = true, r
     prev = m;
   }
 
+  // Rule 2 again: a Reply to a message that a guess or your correction put in a thread joins that
+  // thread too (e.g. ↩ on an AUTO reply in the thread pane), instead of starting its own thread.
+  for (const m of msgs) {
+    if (via.get(m.id) !== "reply" || overrides(m) !== undefined || !byId.has(m.reply_to)) continue;
+    const r = rootOf.get(m.reply_to);
+    if (r != null && r !== m.id) rootOf.set(m.id, r);
+  }
+
   const threads = new Map();  // root id -> {rootId, root, replies}
   for (const m of msgs) {
     const r = rootOf.get(m.id);

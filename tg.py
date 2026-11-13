@@ -242,6 +242,7 @@ def to_dict(m, entity, tz, text_chars: int, mine_reply_ids: set[int] | frozenset
         "pinned": bool(getattr(m, "pinned", False)),
         "edited": bool(getattr(m, "edit_date", None)) and not getattr(m, "edit_hide", False),
         "ments": text_mentions(m),
+        "links": text_links(m),
         "reactions": [{"emoji": getattr(r.reaction, "emoticon", None) or "★", "count": r.count,
                        "mine": r.chosen_order is not None}
                       for r in (getattr(getattr(m, "reactions", None), "results", None) or [])],
@@ -271,6 +272,19 @@ def text_mentions(m) -> list[list[int]]:
     """Tags of people by name (no @username): [offset, length, user_id] in UTF-16 units, like JS strings."""
     return [[e.offset, e.length, e.user_id] for e in (m.entities or [])
             if isinstance(e, (types.MessageEntityMentionName, types.InputMessageEntityMentionName)) and hasattr(e, "user_id")]
+
+
+def text_links(m) -> list[list]:
+    """Links Telegram marked in the text: [offset, length, url] in UTF-16 units, like JS strings.
+    url is the hidden target of a text link ("details here"), or None for a visible link
+    (the text itself is the link, e.g. "t.me/x" or "docs.google.com/..." without https://)."""
+    out = []
+    for e in m.entities or []:
+        if isinstance(e, types.MessageEntityTextUrl):
+            out.append([e.offset, e.length, e.url])
+        elif isinstance(e, types.MessageEntityUrl):
+            out.append([e.offset, e.length, None])
+    return out
 
 
 def _person(u) -> dict:
@@ -765,7 +779,18 @@ async def send_text(client, cfg: triage.Config, chat: Chat, text: str, reply_to:
     """Send one text message as the user. Only called from the web app's composer."""
     await ensure_mentionable(client, chat, text)
     msg = await client.send_message(chat.entity, text, reply_to=reply_to, parse_mode=ComposerMarkdown)
-    return to_dict(msg, chat.entity, ZoneInfo(cfg.timezone), MAX_TEXT)
+    return to_dict(fix_sent_reply(msg), chat.entity, ZoneInfo(cfg.timezone), MAX_TEXT)
+
+
+def fix_sent_reply(msg):
+    """In DMs and basic groups Telegram answers a send with a short update, and Telethon then puts
+    the request's InputReplyToMessage on the message instead of a MessageReplyHeader. Without this
+    the reply looks like a plain message, and the app shows a thread reply in the channel."""
+    r = msg.reply_to
+    if isinstance(r, types.InputReplyToMessage):
+        msg.reply_to = types.MessageReplyHeader(reply_to_msg_id=r.reply_to_msg_id, reply_to_top_id=r.top_msg_id,
+                                                forum_topic=bool(r.top_msg_id))
+    return msg
 
 
 async def mark_unread(client, chat: Chat) -> None:
@@ -898,7 +923,7 @@ async def send_upload(client, cfg: triage.Config, chat: Chat, data: bytes, filen
     if caption:
         await ensure_mentionable(client, chat, caption)
     msg = await client.send_file(chat.entity, f, caption=caption or None, parse_mode=ComposerMarkdown, reply_to=reply_to)
-    return to_dict(msg, chat.entity, ZoneInfo(cfg.timezone), MAX_TEXT)
+    return to_dict(fix_sent_reply(msg), chat.entity, ZoneInfo(cfg.timezone), MAX_TEXT)
 
 
 async def get_bio(client) -> str:
