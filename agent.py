@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -16,6 +17,7 @@ from zoneinfo import ZoneInfo
 from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, ResultMessage,
                               StreamEvent, ToolUseBlock, create_sdk_mcp_server, tool)
 
+import convos
 import tg
 
 MODEL = os.environ.get("INBOX_MODEL", "claude-opus-5-5")
@@ -191,22 +193,44 @@ class Job:
 
 
 STATE = tg.HOME / "manager.json"  # thread + Claude session id, so a restart picks up where it left off
+ARCHIVE = convos.Archive(tg.HOME / "manager-sessions")  # earlier conversations, kept for looking back
 
 
 class Manager:
     def __init__(self, inbox):
         self.inbox = inbox
-        self.jobs: asyncio.Queue[Job | str] = asyncio.Queue()
+        self.jobs: asyncio.Queue[Job | tuple] = asyncio.Queue()
         self.task: asyncio.Task | None = None
+        self.archive = ARCHIVE
         self.history: list[dict] = []  # for the UI to restore the thread on reload
         self.session_id: str | None = None
+        self.id, self.started = convos.new_id(), time.time()
         if STATE.exists():
             saved = json.loads(STATE.read_text("utf-8"))
             self.history, self.session_id = saved.get("history", []), saved.get("session_id")
+            self.id = saved.get("id") or self.id
+            self.started = saved.get("started") or self.history and STATE.stat().st_mtime or self.started
 
     def _save(self) -> None:
-        STATE.write_text(json.dumps({"history": self.history, "session_id": self.session_id}, ensure_ascii=False), "utf-8")
+        STATE.write_text(json.dumps(self.current(), ensure_ascii=False), "utf-8")
         os.chmod(STATE, 0o600)
+
+    def current(self) -> dict:
+        last = max((m.get("ts") or 0 for m in self.history), default=0)
+        return {"id": self.id, "started": self.started, "updated": last or time.time(), "session_id": self.session_id,
+                "history": self.history}
+
+    def _switch_to(self, convo: dict | None) -> None:
+        """Keep the open conversation in the archive, then open `convo` (or a fresh one)."""
+        self.archive.save(self.current())
+        convo = convo or {}
+        self.history = list(convo.get("history", []))
+        self.session_id = convo.get("session_id")
+        self.id, self.started = convo.get("id") or convos.new_id(), convo.get("started") or time.time()
+        if self.history:
+            self._save()
+        else:
+            STATE.unlink(missing_ok=True)
 
     def start(self) -> None:
         self.task = asyncio.create_task(self._worker())
@@ -247,13 +271,20 @@ class Manager:
         client: ClaudeSDKClient | None = None
         while True:
             job = await self.jobs.get()
-            if job == "reset":
-                if client:
-                    await client.disconnect()
-                client = None
-                self.history.clear()
-                self.session_id = None
-                STATE.unlink(missing_ok=True)
+            if isinstance(job, tuple):  # ("switch", convo id or None, future): New conversation / Continue
+                _, cid, done = job
+                try:
+                    convo = None
+                    if cid:
+                        convo = self.archive.load(cid)
+                        self.archive.remove(cid)
+                    if client:
+                        await client.disconnect()
+                    client = None
+                    self._switch_to(convo)
+                    done.set_result(self.history)
+                except Exception as exc:  # noqa: BLE001 - e.g. unknown id: hand it to the caller
+                    done.set_exception(exc)
                 continue
             try:
                 if client is None:
@@ -271,8 +302,8 @@ class Manager:
                 await job.out.put(None)
 
     async def _run(self, client: ClaudeSDKClient, job: Job) -> None:
-        self.history.append({"role": "user", "text": job.prompt})
-        reply = {"role": "assistant", "text": "", "tools": []}
+        self.history.append({"role": "user", "text": job.prompt, "ts": time.time()})
+        reply = {"role": "assistant", "text": "", "tools": [], "ts": time.time()}
         self.history.append(reply)
         await client.query(job.prompt)
         async for msg in client.receive_response():
@@ -305,5 +336,15 @@ class Manager:
         while (event := await job.out.get()) is not None:
             yield event
 
+    async def _switch(self, cid: str | None) -> list[dict]:
+        done = asyncio.get_running_loop().create_future()
+        await self.jobs.put(("switch", cid, done))
+        return await done
+
     async def reset(self) -> None:
-        await self.jobs.put("reset")
+        """Start a new conversation; the current one goes to the archive."""
+        await self._switch(None)
+
+    async def resume(self, cid: str) -> list[dict]:
+        """Reopen an archived conversation (the current one goes to the archive). KeyError if unknown."""
+        return await self._switch(cid)

@@ -735,7 +735,7 @@ function setView(name) {
   if (name === "manager") {
     closePane();
     header(`${botAv("s24")}<h1>Inbox Manager</h1><span class="app-tag">APP</span><span class="topic">Reads your Telegram for you · read-only</span>`,
-      `<button class="btn" data-act="new-convo">＋ <span class="lbl">New conversation</span></button>`);
+      `<button class="btn" data-act="convo-history" title="Look back at earlier conversations">🕘 <span class="lbl">History</span></button><button class="btn" data-act="new-convo">＋ <span class="lbl">New conversation</span></button>`);
   } else if (name === "threads") {
     header(`<span class="hash">🧵</span><h1>Threads</h1><span class="topic">Threads you replied in, and replies to you</span>`,
       `<button class="btn" data-act="thread-check" title="Check how well replies are grouped into threads">🎯 <span class="lbl">Check accuracy</span></button><button class="btn" data-act="threads-read-all">✓ <span class="lbl">Mark all as read</span></button><button class="btn" data-act="threads-refresh">↻ <span class="lbl">Refresh</span></button>`);
@@ -757,8 +757,11 @@ $("#ch-actions").addEventListener("click", async (e) => {
   const act = e.target.closest("[data-act]")?.dataset.act;
   if (act === "new-convo") {
     if (busy) return;
+    showPastBar(null);
     await api("/api/reset", { method: "POST" });
     renderHistory([]);
+  } else if (act === "convo-history") {
+    openConvos();
   } else if (act === "topic-needs") {
     if (currentTopic) toggleNeedsTopic(currentChat, currentTopic); else toggleNeedsChat(currentChat);
   } else if (act === "thread-check") {
@@ -821,9 +824,15 @@ function renderHistory(history) {
     thread.innerHTML = `<div class="hello">${botAv()}<h2>Inbox Manager</h2>
       <p>Hi${state ? " " + esc(state.me.name.split(" ")[0]) : ""}! I read your Telegram for you (read-only). Ask me what needs you, who tagged you, or what happened in any chat.</p></div>`;
   }
+  let day = null;
   for (const m of history) {
-    if (m.role === "user") addUserMsg(m.text, "");
-    else addBotMsg(m.text, m.tools, "");
+    if (m.ts) {
+      const d = ymd(new Date(m.ts * 1000));
+      if (d !== day) { day = d; thread.insertAdjacentHTML("beforeend", dayPill(dayLabel(d))); }
+    }
+    const when = m.ts ? clock(m.ts) : "";
+    if (m.role === "user") addUserMsg(m.text, when);
+    else addBotMsg(m.text, m.tools, when);
   }
   $("#suggestions").hidden = history.length > 0;
   thread.scrollTop = thread.scrollHeight;
@@ -863,8 +872,87 @@ function toolLabel(name, input) {
   return label;
 }
 
+// ---------------------------------------------------------------- earlier conversations
+// "New conversation" keeps the old one on the server. History lists them; opening one shows it
+// read-only in place of the current conversation, with Continue to pick it up again.
+let pastConvo = null;  // the archived conversation on screen, or null for the current one
+const clock = (ts) => new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit" }).format(new Date(ts * 1000));
+const whenLabel = (ts) => (ts ? `${dayLabel(ymd(new Date(ts * 1000)))}, ${clock(ts)}` : "");
+
+async function openConvos() {
+  const list = $("#convo-list");
+  list.innerHTML = `<div class="empty">Loading…</div>`;
+  $("#convos").hidden = false;
+  try {
+    const { current, past } = await api("/api/manager/sessions");
+    const row = (c, isCur) => `<div class="convo-row${pastConvo?.id === c.id || (isCur && !pastConvo) ? " on" : ""}" data-cid="${isCur ? "current" : esc(c.id)}">
+      <div class="main"><div class="t">${esc(c.title)}${isCur ? `<span class="cur">CURRENT</span>` : ""}</div>
+      <div class="sub">${esc(whenLabel(c.updated || c.started))} · ${c.count} question${c.count === 1 ? "" : "s"}</div></div>
+      ${isCur ? "" : `<button class="del" data-del="${esc(c.id)}" title="Delete this conversation">🗑</button>`}</div>`;
+    list.innerHTML = (current ? row(current, true) : "") + past.map((c) => row(c, false)).join("")
+      || `<div class="empty">No earlier conversations yet. When you start a new conversation, the old one is kept here.</div>`;
+  } catch (e) {
+    list.innerHTML = `<div class="empty">⚠ ${esc(e.message)}</div>`;
+  }
+}
+const closeConvos = () => { $("#convos").hidden = true; };
+$("#convos").addEventListener("click", async (e) => {
+  if (e.target.id === "convos" || e.target.closest("[data-close]")) return closeConvos();
+  const del = e.target.closest("[data-del]")?.dataset.del;
+  if (del) {
+    e.stopPropagation();
+    if (!(await confirmBox("Delete conversation?", "It will be gone from History for good.", "Delete"))) return;
+    try { await api(`/api/manager/sessions/${del}`, { method: "DELETE" }); } catch (err) { return toast(esc(err.message), true); }
+    if (pastConvo?.id === del) await leavePast();
+    return openConvos();
+  }
+  const cid = e.target.closest("[data-cid]")?.dataset.cid;
+  if (!cid) return;
+  closeConvos();
+  if (cid === "current") return leavePast();
+  viewPast(cid);
+});
+
+async function viewPast(cid) {
+  if (busy) return toast("Wait for the Inbox Manager to finish answering first", true);
+  let c;
+  try { c = await api(`/api/manager/sessions/${cid}`); } catch (e) { return toast(esc(e.message), true); }
+  if (view !== "manager") navigate({ view: "manager" });
+  pastConvo = c;
+  renderHistory(c.history);
+  showPastBar(c);
+  $("#thread").scrollTop = 0;
+}
+function showPastBar(c) {
+  pastConvo = c;
+  const bar = $("#convo-bar");
+  $("#manager-box").classList.toggle("viewing-past", !!c);
+  bar.hidden = !c;
+  if (!c) return;
+  bar.innerHTML = `<span class="lbl">Past conversation · <b>${esc(c.title)}</b> · ${esc(whenLabel(c.started))}</span>
+    <button class="btn primary" data-past="continue" title="Make this the open conversation again (the current one is kept in History)">Continue this conversation</button>
+    <button class="btn" data-past="back">Back to current</button>`;
+}
+async function leavePast() {
+  if (!pastConvo) return;
+  showPastBar(null);
+  try { renderHistory((await api("/api/manager/sessions/current")).history); } catch (e) { toast(esc(e.message), true); }
+}
+$("#convo-bar").addEventListener("click", async (e) => {
+  const a = e.target.closest("[data-past]")?.dataset.past;
+  if (a === "back") return leavePast();
+  if (a !== "continue" || busy || !pastConvo) return;
+  try {
+    const { history } = await postJson(`/api/manager/sessions/${pastConvo.id}/resume`, {});
+    showPastBar(null);
+    renderHistory(history);
+    $("#input").focus();
+  } catch (err) { toast(esc(err.message), true); }
+});
+
 async function ask(prompt) {
   if (!prompt.trim() || busy) return;
+  if (pastConvo) await leavePast();  // asking always goes to the current conversation
   busy = true;
   $("#send").disabled = true;
   $("#suggestions").hidden = true;
@@ -2140,7 +2228,7 @@ function isTyping(e) {
   const t = e.target;
   return t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable;
 }
-const overlayOpen = () => ["#lightbox", "#switcher", "#shortcuts", "#details", "#confirm"].some((s) => !$(s).hidden);
+const overlayOpen = () => ["#lightbox", "#switcher", "#shortcuts", "#details", "#confirm", "#convos"].some((s) => !$(s).hidden);
 let recording = null;  // action id being rebound
 document.addEventListener("keydown", (e) => {
   if (recording) return;  // the shortcuts dialog handles it
@@ -2152,6 +2240,7 @@ document.addEventListener("keydown", (e) => {
     if (!$("#switcher").hidden) { closeSwitcher(); return; }
     if (!$("#shortcuts").hidden) { closeShortcuts(); return; }
     if (!$("#details").hidden) { closeDetails(); return; }
+    if (!$("#convos").hidden) { closeConvos(); return; }
     if (e.target.id === "search") return;  // the search box closes its own dropdown
     if (view === "chat" && replyTo) { replyTo = null; updateComposer(); return; }
     if (!$("#pane").hidden && !isTyping(e) && view !== "unreads") { closePane(); return; }
@@ -2215,7 +2304,6 @@ function resizeSidebar(delta) {
 async function loadPrefs() {
   try { const p = await api("/api/prefs"); overrides = p.shortcuts || {}; uiPrefs = p.ui || {}; } catch { overrides = {}; }
   if (typeof applyTheme === "function") applyTheme();
-  if (typeof updateBell === "function") updateBell();
   if (typeof applyCalm === "function") applyCalm();
   renderSidebar();
   const jump = bindingOf(action("quickSwitcher"));

@@ -123,6 +123,24 @@
     { role: "assistant", text: "Three things need you today, most urgent first:\n\n1. **Approve the pricing copy** — Hana tagged you in **Product Squad** (10:15). It has to go out with release 4.2 **before 2pm**. You already suggested a better line and she's updating it, so a quick 👍 on the final version closes it.\n2. **Linh Tran** wants to move your 1:1 from Wednesday to **Thursday, same time**. Just needs a yes.\n3. **Aisha Khan** asked for 10 minutes before the **3pm partner sync** to align on API pricing.\n\nSafe to skip: *Weekend Football* (143 messages, no mention of you) and *Deploy Bot* (staging deploys, all green)." },
   ];
 
+  // Inbox Manager conversations: the open one plus a couple kept from earlier "New conversation"s.
+  const ts1 = at(1, 9, 40).ts, ts3 = at(3, 17, 5).ts;
+  const convos = {
+    cur: { id: "c0000000cur0", started: now / 1000 - 600, history: shot === "manager" ? HISTORY.map((m) => ({ ...m, ts: now / 1000 - 600 })) : [] },
+    past: [
+      { id: "c00000000001", started: ts1, updated: ts1 + 300, history: [
+        { role: "user", text: "Who tagged me yesterday and what do they want?", ts: ts1 },
+        { role: "assistant", text: "Two people tagged you yesterday:\n\n- **Marco Rossi** in **Backend** wants a review of the retry PR before Friday.\n- **Priya Nair** asked if you can join the hiring debrief at 4pm. She already got a yes from Sam.", tools: [["mentions", "{}"]], ts: ts1 + 20 },
+        { role: "user", text: "Draft a reply to Marco", ts: ts1 + 280 },
+        { role: "assistant", text: "Here's a draft you can send:\n\n> Sure, I'll look at the retry PR tomorrow morning and leave comments by noon.", tools: [], ts: ts1 + 300 }] },
+      { id: "c00000000002", started: ts3, updated: ts3 + 60, history: [
+        { role: "user", text: "What can I safely ignore?", ts: ts3 },
+        { role: "assistant", text: "*Weekend Football* (98 new, nothing for you) and *Deploy Bot* (all green). Everything else is quiet.", tools: [["overview", "{}"]], ts: ts3 + 60 }] },
+    ],
+  };
+  const convoSummary = (c) => ({ id: c.id, title: c.history.find((m) => m.role === "user")?.text || "Untitled conversation",
+    started: c.started, updated: c.updated || c.history.at(-1)?.ts || c.started, count: c.history.filter((m) => m.role === "user").length });
+
   const json = (v, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
   const realFetch = window.fetch.bind(window);
   window.fetch = async (input, opts = {}) => {
@@ -133,6 +151,28 @@
     if (p === "/api/state") return json({ me: ME, status: "ready", sending_enabled: true, mark_read_enabled: true, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       refreshing: false, live: true, snapshot_at: "", totals: { chats: CHATS.length, unread: 187, must: 3, maybe: 6, noise: 3, noise_unread: 149 },
       mentions_unread: 2, threads_unread: 1, chats: CHATS, topics: TOPICS, history: shot === "manager" ? HISTORY : [] });
+    if (p === "/api/manager/sessions") return json({ current: convos.cur.history.length ? convoSummary(convos.cur) : null, past: convos.past.map(convoSummary) });
+    if (p === "/api/reset") {
+      if (convos.cur.history.length) convos.past.unshift(convos.cur);
+      convos.cur = { id: "c" + String(Date.now()).slice(-11), started: Date.now() / 1000, history: [] };
+      return json({ ok: true });
+    }
+    {
+      const s = p.match(/^\/api\/manager\/sessions\/(\w+)(\/resume)?$/);
+      if (s) {
+        if (s[1] === "current") return json({ ...convoSummary(convos.cur), current: true, history: convos.cur.history });
+        const i = convos.past.findIndex((c) => c.id === s[1]);
+        if (i < 0) return json({ detail: "no such conversation" }, 404);
+        if (method === "DELETE") { convos.past.splice(i, 1); return json({ ok: true }); }
+        if (s[2]) {
+          const [c] = convos.past.splice(i, 1);
+          if (convos.cur.history.length) convos.past.unshift(convos.cur);
+          convos.cur = c;
+          return json({ history: c.history });
+        }
+        return json({ ...convoSummary(convos.past[i]), current: false, history: convos.past[i].history });
+      }
+    }
     if (p === "/api/prefs") return json(method === "GET" ? { shortcuts: {}, ui: { forumOpen: [-1002], readMode: "keep" } } : { ok: true });
     if (p === "/api/chats") return json({ chats: CHATS });
     if (p === "/api/folders") return json({ folders: [] });

@@ -27,6 +27,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+import convos
 import tg
 import triage
 from agent import Manager
@@ -273,7 +274,10 @@ async def only_this_page(request: Request, call_next):
         origin = request.headers.get("origin")
         if request.headers.get("x-inbox") != "1" or (origin and urlparse(origin).netloc not in ALLOWED_HOSTS):
             return JSONResponse({"error": "forbidden"}, status_code=403)
-    return await call_next(request)
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):  # revalidate (ETag) so an app update never runs yesterday's JS/CSS
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
 
 
 @app.get("/")
@@ -1006,6 +1010,41 @@ async def ask(request: Request):
 @app.post("/api/reset")
 async def reset():
     await manager.reset()
+    return {"ok": True}
+
+
+# Earlier Inbox Manager conversations ("New conversation" keeps the old one here).
+@app.get("/api/manager/sessions")
+async def manager_sessions():
+    cur = manager.current()
+    return {"current": convos.summary(cur) if cur["history"] else None, "past": manager.archive.list()}
+
+
+@app.get("/api/manager/sessions/{cid}")
+async def manager_session(cid: str):
+    if cid == "current" or cid == manager.id:
+        return {**convos.summary(manager.current()), "current": True, "history": manager.history}
+    try:
+        c = manager.archive.load(cid)
+    except KeyError:
+        raise HTTPException(404, "no such conversation")
+    return {**convos.summary(c), "current": False, "history": c.get("history", [])}
+
+
+@app.post("/api/manager/sessions/{cid}/resume")
+async def manager_resume(cid: str):
+    try:
+        return {"history": await manager.resume(cid)}
+    except KeyError:
+        raise HTTPException(404, "no such conversation")
+
+
+@app.delete("/api/manager/sessions/{cid}")
+async def manager_forget(cid: str):
+    try:
+        manager.archive.remove(cid)
+    except KeyError:
+        raise HTTPException(404, "no such conversation")
     return {"ok": True}
 
 

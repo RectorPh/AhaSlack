@@ -64,52 +64,17 @@ function playNotifySound(kind = "dm") {  // at most one every 1.5s, so a burst o
   playSound(soundFor(kind));
 }
 
-// ---------------------------------------------------------------- mute (top bar bell, menu, ⌘⌥⇧M)
+// ---------------------------------------------------------------- mute (⌘⌥⇧M, ⌘K, Preferences)
 function setMute(until) {  // until: 0 = sounds on, Infinity = muted until you unmute, or a time
   uiPrefs.sounds = until !== Infinity;
   uiPrefs.soundMuteUntil = until && until !== Infinity ? until : 0;
   saveUi();
-  updateBell();
   toast(until ? `🔕 Sounds muted${until === Infinity ? "" : " until " + new Date(until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", weekday: until - Date.now() > 12 * 3600e3 ? "short" : undefined })}` : "🔔 Sounds on", false, 2500);
 }
 function toggleMute() { setMute(mutedUntil() ? 0 : Infinity); }
 function tomorrowAt9() { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d.getTime(); }
-function updateBell() {
-  const b = $("#bell");
-  if (!b) return;
-  const m = mutedUntil();
-  b.textContent = m ? "🔕" : "🔔";
-  b.classList.toggle("muted", !!m);
-  b.title = m ? (m === Infinity ? "Sounds muted. Click to change." : `Sounds muted until ${new Date(m).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}. Click to change.`) : "Sounds on. Click to mute or change sounds.";
-}
-setInterval(() => { if (uiPrefs.soundMuteUntil && uiPrefs.soundMuteUntil <= Date.now()) { uiPrefs.soundMuteUntil = 0; updateBell(); } }, 30000);
+setInterval(() => { if (uiPrefs.soundMuteUntil && uiPrefs.soundMuteUntil <= Date.now()) { uiPrefs.soundMuteUntil = 0; } }, 30000);
 
-document.body.insertAdjacentHTML("beforeend", `<button class="bell" id="bell" type="button">🔔</button>
-  <div class="bell-menu" id="bell-menu" hidden></div>`);
-$("#bell").addEventListener("click", (e) => {
-  e.stopPropagation();
-  const menu = $("#bell-menu");
-  if (!menu.hidden) { menu.hidden = true; return; }
-  const m = mutedUntil();
-  menu.innerHTML = `<div class="mh">${m ? "🔕 Sounds are muted" : "🔔 Sounds are on"}</div>
-    ${m ? `<button class="mi" data-mute="0">Turn sounds back on</button>` : `<button class="mi" data-mute="inf">Mute sounds <span class="k">${typeof plainCombo === "function" ? plainCombo("Mod+Alt+Shift+M") : ""}</span></button>
-      <button class="mi" data-mute="30">Mute for 30 minutes</button><button class="mi" data-mute="60">Mute for 1 hour</button>
-      <button class="mi" data-mute="tomorrow">Mute until tomorrow, 9:00</button>`}
-    <div class="sep"></div><button class="mi" data-mute="settings">Sound settings…</button>`;
-  menu.hidden = false;
-  const r = $("#bell").getBoundingClientRect();
-  menu.style.top = r.bottom + 6 + "px";
-  menu.style.left = Math.max(8, r.right - menu.offsetWidth) + "px";
-});
-$("#bell-menu").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-mute]");
-  if (!b) return;
-  $("#bell-menu").hidden = true;
-  const v = b.dataset.mute;
-  if (v === "settings") return openSoundSettings();
-  setMute(v === "0" ? 0 : v === "inf" ? Infinity : v === "tomorrow" ? tomorrowAt9() : Date.now() + Number(v) * 60000);
-});
-document.addEventListener("click", (e) => { if (!e.target.closest("#bell-menu")) $("#bell-menu").hidden = true; });
 function openSoundSettings() {
   openShortcuts("prefs");
   setTimeout(() => $(".sound-prefs")?.scrollIntoView({ block: "start" }), 50);
@@ -127,7 +92,7 @@ function soundSectionHtml() {
       <select name="soundFor" data-kind="${k}">${opts(soundFor(k))}</select>
       <button type="button" class="btn small" data-sound-test="${k}" title="Play it">▶</button>`).join("")}</div>
     <label class="pref">Volume <input type="range" name="soundVolume" min="0" max="100" value="${uiPrefs.soundVolume ?? 70}"> <span class="sub" id="vol-val">${uiPrefs.soundVolume ?? 70}%</span></label>
-    <div class="pref-sub">Sounds play when you aren't already looking at that conversation. The bell in the top bar mutes them for a while.</div></div>`;
+    <div class="pref-sub">Sounds play when you aren't already looking at that conversation. ⌘K → “Mute sounds” mutes them for a while.</div></div>`;
 }
 const _openShortcutsSounds = openShortcuts;
 openShortcuts = function (tab = "prefs") {
@@ -145,7 +110,7 @@ openShortcuts = function (tab = "prefs") {
   box.addEventListener("input", (e) => { if (e.target.name === "soundVolume") $("#vol-val").textContent = e.target.value + "%"; });
   box.addEventListener("change", (e) => {
     const t = e.target;
-    if (t.name === "soundsOn") { uiPrefs.sounds = t.checked; uiPrefs.soundMuteUntil = 0; updateBell(); t.parentElement.querySelector(".sub")?.remove(); }
+    if (t.name === "soundsOn") { uiPrefs.sounds = t.checked; uiPrefs.soundMuteUntil = 0; t.parentElement.querySelector(".sub")?.remove(); }
     if (t.name === "soundFor") { uiPrefs.soundFor = { ...(uiPrefs.soundFor || {}), [t.dataset.kind]: t.value }; playSound(t.value); }
     if (t.name === "soundVolume") { uiPrefs.soundVolume = Number(t.value); playSound(soundFor("dm")); }
     saveUi();

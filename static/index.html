@@ -144,6 +144,7 @@
 
 <!-- The manager conversation; moved between the main view and the thread pane. -->
 <div class="manager-box" id="manager-box">
+  <div class="convo-bar" id="convo-bar" hidden></div>
   <div class="thread" id="thread"></div>
   <div class="suggestions" id="suggestions">
     <button>What needs me today?</button>
@@ -193,6 +194,15 @@
   <div class="modal details">
     <header class="modal-head"><h3 id="details-title">Details</h3><button class="icon-btn" data-close title="Close">✕</button></header>
     <div class="details-body" id="details-body"></div>
+  </div>
+</div>
+
+<!-- Earlier Inbox Manager conversations -->
+<div class="overlay" id="convos" hidden>
+  <div class="modal convos">
+    <header class="modal-head"><h3>Past conversations</h3><button class="icon-btn" data-close title="Close (Esc)">✕</button></header>
+    <p class="modal-sub">Every “New conversation” keeps the one before it here. Open one to read it or pick it up again.</p>
+    <div class="convo-list" id="convo-list"></div>
   </div>
 </div>
 

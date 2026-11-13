@@ -102,6 +102,11 @@ Ask in plain words: *"What needs me today?"*, *"Who tagged me and what do they w
 links into the app, and can draft replies for you to send. It runs on Claude through your
 Claude Code login. **It can only read**: it has no tool that sends, edits or marks anything.
 
+**＋ New conversation** doesn't throw the old one away: **🕘 History** lists every earlier
+conversation. Open one to read it again, or **Continue this conversation** to pick it up where
+you left off (the one you had open goes into History). They're kept on your Mac in
+`~/.config/telegram-inbox/manager-sessions/`.
+
 ## And everything you'd expect from a Slack client
 
 - **Live sync:** new messages, edits, deletes and read states arrive as they happen, with
@@ -123,8 +128,8 @@ Claude Code login. **It can only read**: it has no tool that sends, edits or mar
 - **Themes:** light, dark or follow your Mac; nine sidebar themes (Aubergine, Jade, Lagoon,
   Indigo, Ember, Forest, Graphite, Paper, Sand) or your own colors, in Preferences (**⌘,**).
 - **Sounds:** a different sound for DMs, mentions and new thread replies (seven to choose
-  from, with volume), synthesized in the app. The 🔔 in the top bar mutes them, for 30 minutes,
-  an hour, until tomorrow or until you turn them back on (**⌘⌥⇧M**).
+  from, with volume), synthesized in the app. Turn them off in Preferences, mute them with **⌘⌥⇧M**, or
+  **⌘K** → *Mute sounds* for 1 hour or until tomorrow.
 - **Telegram Topics as channels:** each topic gets its own messages, composer and mark-read.
 
 <img alt="A Telegram topic shown as a Slack channel" src="docs/screenshots/topics.png" width="100%">
@@ -277,6 +282,7 @@ tg.py            Telegram access: chats, threads, triage snapshot, mentions, sea
 stickers.py      your stickers, custom emoji and gifts
 triage.py        "needs you / worth a look / ignore" rules
 agent.py         the Inbox Manager (Claude Agent SDK, read-only Telegram tools)
+convos.py        earlier Inbox Manager conversations (History)
 fetch_inbox.py   the command-line snapshot
 static/          the app: app.js, threads.js, live.js, slack.js, picker.js, demo.js
 electron/        the AhaSlack macOS app
